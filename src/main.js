@@ -431,7 +431,7 @@ async function main() {
       snapGrace = 0.4;
       // snapping a palm costs a little speed and gives a jolt
       const v = vehicle.body.linvel();
-      vehicle.body.setLinvel({ x: v.x * 0.85, y: v.y, z: v.z * 0.85 }, true);
+      vehicle.body.setLinvel({ x: v.x * 0.72, y: v.y, z: v.z * 0.72 }, true);
       audio.thump(6);
       rig.shake = 0.4;
     }

@@ -29,12 +29,12 @@ export const TUNING = {
   gripTrack: 1.5,           // the packed dirt track
   gripDrift: 0.6,           // rear grip with the handbrake pulled (fraction of normal grip)
   gripSliding: 0.8,         // rear grip while you hold a drift (fraction; keeps slides going instead of snapping back)
-  antiRoll: 9000,
+  antiRoll: 6000,
   steerReturn: 11,          // how fast the wheels straighten when you let go
   countersteer: 0.75,       // automatic countersteer in slides (Forza-style steering assist)
   yawDamping: 2.2,          // keeps the buggy straight when you are not steering
   downforce: 0.8,           // N per (m/s)^2: presses the buggy onto bumps at speed
-  maxDriftAngle: 0.5,       // radians (~40°): drift assist stops slides going further than this
+  maxDriftAngle: 0.75,      // radians (~40°): drift assist stops slides going further than this
   driftAssist: 60,          // how hard it pulls back (rad/s² per radian over the limit)
 };
 
@@ -164,7 +164,10 @@ export class Vehicle {
     // --- steering (less at high speed so it stays controllable), plus automatic countersteer:
     // the front wheels lean towards where the buggy is actually going, like Forza's steering assist
     // less lock at high speed, so full lock on a keyboard carves instead of spinning
-    const steerLimit = T.maxSteer / (1 + (speed * speed) / 900 + Math.max(0, speed - 26) * 0.05);
+    // full lock is about the wheel angle the tyres can actually use at this speed (plus a little slip),
+    // so the whole range of the stick/keys matters instead of saturating at a third of the way
+    const gripAngle = Math.atan((2.2 * (this.surfaceGrip || 1) * 9.81) / Math.max(speed * speed, 1)) + 0.09;
+    const steerLimit = Math.min(T.maxSteer / (1 + (speed * speed) / 900 + Math.max(0, speed - 26) * 0.05), gripAngle);
     let target = steerIn * steerLimit;
     // only help when the player isn't steering into the turn themselves
     const steeringIntoSlide = steerIn * slipAngle < 0;
@@ -176,7 +179,9 @@ export class Vehicle {
     // --- throttle and brakes
     const pos = body.translation();
     const groundH = getHeight(pos.x, pos.z);
-    const waterDepth = Math.max(0, swashAt(pos.x, this.time) - groundH);
+    // how deep the buggy is in the water (measured from its wheels, not just the sea floor below)
+    const waterLevel = swashAt(pos.x, this.time);
+    const waterDepth = Math.max(0, Math.min(waterLevel - groundH, waterLevel - (pos.y - 0.9)));
     const waterFactor = 1 / (1 + waterDepth * 0.5);
 
     let drive = 0;
@@ -200,11 +205,14 @@ export class Vehicle {
     drive *= waterFactor;
 
     // --- boost: a push straight out of the exhaust, on the ground and in the air
-    if (input.boost > 0 && speed < BOOST.maxSpeed) {
-      const f = T.mass * BOOST.accel * input.boost * dt * (0.5 + 0.5 * waterFactor);
+    if (input.boost > 0) {
+      // fades out towards ~175 km/h instead of a hard cap, so downhill and a clean line still gain speed
+      const fade = Math.max(0, 1 - Math.pow(Math.max(0, speed) / BOOST.maxSpeed, 3));
+      const f = T.mass * BOOST.accel * input.boost * fade * dt * (0.5 + 0.5 * waterFactor);
       body.applyImpulse({ x: fwd.x * f, y: fwd.y * f, z: fwd.z * f }, true);
     }
 
+    let surfaceSum = 0;
     for (let i = 0; i < 4; i++) {
       const w = WHEELS[i];
       c.setWheelSteering(i, w.front ? this.steer : 0);
@@ -223,13 +231,14 @@ export class Vehicle {
       const wet = Math.min(1, Math.max(0, (1.5 - h) / 1.0));
       let grip = T.gripDrySand + (T.gripWetSand - T.gripDrySand) * wet;
       grip += (T.gripTrack - grip) * trackAt(cp.x, cp.z); // packed dirt on the track grips best
-      const under = swashAt(cp.x, this.time) - h;
+      const under = swashAt(cp.x, this.time) - Math.max(h, cp.y);
       if (under > 0) grip *= 1 - 0.2 * Math.min(1, under * 3);
       if (!w.front) {
         // power oversteer: full throttle while cornering hard uses up some of the rear tyres' grip
         const cornering = Math.min(1, Math.abs(input.steer)) * Math.min(1, Math.max(0, (speed - 12) / 6)) * Math.max(0, Math.min(1, (30 - speed) / 8));
         grip *= 1 - 0.38 * input.throttle * cornering;
-        if (input.handbrake) grip *= T.gripDrift;
+        // the handbrake bites harder at speed, so a quick flick works at 100+ km/h too
+        if (input.handbrake) grip *= T.gripDrift * (1 - 0.35 * Math.min(1, Math.max(0, (speed - 15) / 15)));
         else if (driftHeld) {
           // throttle + countersteer keep the rear loose once a slide has started (power-over drifting)
           const k = Math.min(1, (Math.abs(slipAngle) - 0.15) / 0.2) * input.throttle;
@@ -239,7 +248,11 @@ export class Vehicle {
       // ease grip changes in over ~0.2 s so pulling the handbrake starts a slide instead of a snap spin
       this.grip[i] += (grip - this.grip[i]) * Math.min(1, dt * 5);
       c.setWheelFrictionSlip(i, this.grip[i] * (w.front ? T.frontGrip : 1));
+      surfaceSum += 0.95 + (grip - T.gripDrySand) * 0.5;
     }
+
+    // how grippy the ground is overall (about 0.95 g dry sand, 1.1 wet, 1.15 track)
+    this.surfaceGrip = Math.min(1.25, Math.max(0.9, surfaceSum / 4));
 
     // --- anti-roll bars
     for (const [l, r] of [[0, 1], [2, 3]]) {
@@ -292,11 +305,12 @@ export class Vehicle {
       // straightens out towards where it's going
       if (driftHeld) {
         // drift controller: steer into the turn for a wider angle, countersteer for a narrower one
-        const want = 0.42 + (counter ? -0.12 : 0.1) * Math.abs(input.steer);
+        // full countersteer ~15°, full steer into the turn ~40°
+        const want = 0.42 + (counter ? -0.16 : 0.28) * Math.abs(input.steer);
         const err = want - Math.abs(slipAngle);
         // plus damping on how fast the angle changes, so it settles instead of wobbling
         const slipRate = (slipAngle - (this.prevSlip ?? slipAngle)) / dt;
-        const yawErr = -Math.sign(slipAngle) * err * 7 + slipRate * 1.6;
+        const yawErr = -Math.sign(slipAngle) * err * 14 + slipRate * 5;
         const hold = yawErr * input.throttle * inertia * dt;
         body.applyTorqueImpulse({ x: up.x * hold, y: up.y * hold, z: up.z * hold }, true);
       } else if (!driftHeld && !input.handbrake && Math.abs(slipAngle) > 0.03) {
@@ -305,12 +319,14 @@ export class Vehicle {
       }
       // grip limit: outside a drift, don't let the buggy rotate faster than its tyres could turn it
       // (so full lock at top speed carves a curve instead of spinning)
-      if (!driftHeld && !input.handbrake && Math.abs(speed) > 22) {
-        // (only at high speed, and it scales with how much you steer, so half lock still turns less than full lock)
-        const maxYaw = ((1.3 * 9.81) / Math.abs(speed)) * (0.35 + 0.65 * Math.min(1, Math.abs(input.steer)));
+      if (!driftHeld && !input.handbrake && Math.abs(speed) > 8) {
+        // the turn rate follows the steering input all the way to full lock, and the surface sets the limit:
+        // soft dry sand < wet sand < the packed track
+        const mu = this.surfaceGrip;
+        const maxYaw = ((mu * 9.81) / Math.abs(speed)) * (0.15 + 0.85 * Math.pow(Math.min(1, Math.abs(input.steer)), 0.9));
         const over = Math.abs(yawRate) - maxYaw;
         if (over > 0) {
-          const a = -Math.sign(yawRate) * over * inertia * Math.min(1, dt * 10);
+          const a = -Math.sign(yawRate) * over * inertia * Math.min(1, dt * 30);
           body.applyTorqueImpulse({ x: up.x * a, y: up.y * a, z: up.z * a }, true);
         }
       }

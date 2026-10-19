@@ -91,8 +91,8 @@ export async function loadBuggy(url = 'models/buggy.glb') {
   const leanState = { roll: 0, pitch: 0 };
   function setLean(latG, longG, dt) {
     const k = Math.min(1, dt * 6);
-    leanState.roll += (Math.max(-1.5, Math.min(1.5, latG)) * 0.07 - leanState.roll) * k;
-    leanState.pitch += (Math.max(-1.5, Math.min(1.5, longG)) * -0.035 - leanState.pitch) * k;
+    leanState.roll += (Math.max(-1.5, Math.min(1.5, latG)) * 0.1 - leanState.roll) * k;
+    leanState.pitch += (Math.max(-1.5, Math.min(1.5, longG)) * -0.05 - leanState.pitch) * k;
     lean.rotation.set(leanState.pitch, 0, leanState.roll);
   }
 

@@ -6,7 +6,7 @@ export const BOOST = {
   start: 50,          // meter at the start (0-100)
   use: 22,            // per second while boosting
   accel: 14,          // m/s² of extra push
-  maxSpeed: 46,       // m/s (~165 km/h): boost can take you past the engine's top speed
+  maxSpeed: 52,       // m/s: boost fades out towards here (~175 km/h in practice)
   small: { amount: 12, respawn: 4, radius: 2.4 },
   big: { amount: 100, respawn: 10, radius: 3.2 },
 };
