@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { RIDE_HEIGHT } from './buggy.js';
 import { getHeight } from './terrain.js';
 import { swashAt } from './ocean.js';
+import { BOOST } from './boost.js';
 
 // Tune the handling here!
 export const TUNING = {
@@ -160,6 +161,12 @@ export class Vehicle {
       brake = 0.35; // engine braking / rolling
     }
     drive *= waterFactor;
+
+    // --- boost: a push straight out of the exhaust, on the ground and in the air
+    if (input.boost > 0 && speed < BOOST.maxSpeed) {
+      const f = T.mass * BOOST.accel * input.boost * dt * (0.5 + 0.5 * waterFactor);
+      body.applyImpulse({ x: fwd.x * f, y: fwd.y * f, z: fwd.z * f }, true);
+    }
 
     for (let i = 0; i < 4; i++) {
       const w = WHEELS[i];

@@ -2,15 +2,13 @@
 // a lifeguard tower, jump ramps and umbrellas. Solid things get physics colliders.
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { getHeight, getNormal, shoreZ, TERRAIN } from './terrain.js';
-import { createNoise2D, mulberry32, fbm } from './noise.js';
+import { getHeight, shoreZ } from './terrain.js';
+import { mulberry32 } from './noise.js';
 
 const rnd = mulberry32(4242);
 const range = (a, b) => a + (b - a) * rnd();
-const noise = createNoise2D(99);
-const SPAWN = { x: 0, z: shoreZ(0) - 25 };
+export const SPAWN = { x: 0, z: shoreZ(0) - 25 };
 const nearSpawn = (x, z, r) => Math.hypot(x - SPAWN.x, z - SPAWN.z) < r;
-const inland = (x, z) => shoreZ(x) - z;
 
 // Wind sway shared by plants
 const wind = { value: 0 };
@@ -33,179 +31,6 @@ function addWind(material, strength, heightScale) {
         transformed.z += gust * bend * 0.6;`
       );
   };
-}
-
-// ---------------------------------------------------------------------------
-// Instanced objects are split into square map tiles. The GPU then only draws tiles that are
-// on screen (and close enough), instead of every palm/rock/grass patch in the world every frame.
-const chunks = []; // { meshes, center, maxDist }
-function addChunked(scene, parts, items, { cell, castShadow = true, maxDist = Infinity }) {
-  const cells = new Map();
-  for (const it of items) {
-    const key = Math.floor(it.matrix.elements[12] / cell) + ',' + Math.floor(it.matrix.elements[14] / cell);
-    if (!cells.has(key)) cells.set(key, []);
-    cells.get(key).push(it);
-  }
-  for (const list of cells.values()) {
-    const center = new THREE.Vector3();
-    for (const it of list) center.add(new THREE.Vector3().setFromMatrixPosition(it.matrix));
-    center.divideScalar(list.length);
-    const meshes = parts.map(({ geometry, material }) => {
-      const im = new THREE.InstancedMesh(geometry, material, list.length);
-      list.forEach((it, i) => {
-        im.setMatrixAt(i, it.matrix);
-        if (it.color) im.setColorAt(i, it.color);
-      });
-      im.castShadow = castShadow;
-      im.receiveShadow = true;
-      im.computeBoundingSphere(); // makes frustum culling work per tile
-      scene.add(im);
-      return im;
-    });
-    chunks.push({ meshes, center, maxDist });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Palm trees: "Coconut Palm" by evolveduk (Sketchfab, CC-BY). The model leans towards -X.
-function placePalms(scene, world, parts, count, maxDist) {
-  for (const part of parts) {
-    // the fronds sway in the wind and get smooth cut-out edges
-    if (part.material.alphaTest > 0 || part.material.transparent) {
-      part.material.alphaToCoverage = true;
-      part.material.side = THREE.DoubleSide;
-      addWind(part.material, 0.18, 6);
-    }
-  }
-
-  const spots = [];
-  let tries = 0;
-  while (spots.length < count && tries++ < 20000) {
-    const x = range(-560, 560);
-    const u = range(30, 260);
-    const z = shoreZ(x) - u;
-    if (nearSpawn(x, z, 18)) continue;
-    const cluster = noise(x * 0.012, z * 0.012);
-    if (cluster < 0.15 + (u > 150 ? 0.25 : 0)) continue;
-    if (getNormal(x, z).y < 0.9) continue;
-    if (spots.some((s) => Math.hypot(s.x - x, s.z - z) < 7)) continue;
-    spots.push({ x, z });
-  }
-
-  const items = [];
-  const q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
-  spots.forEach((sp) => {
-    // near the beach, lean towards the sea like real beach palms (+PI/2 turns the model's lean to +Z)
-    const yaw = Math.PI / 2 + range(-0.9, 0.9) + (inland(sp.x, sp.z) > 120 ? range(0, Math.PI * 2) : 0);
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    const sc = range(0.9, 1.35);
-    s.set(sc, sc * range(0.9, 1.15), sc);
-    p.set(sp.x, getHeight(sp.x, sp.z) - 0.15, sp.z);
-    items.push({ matrix: new THREE.Matrix4().compose(p, q, s) });
-    world.createCollider(RAPIER.ColliderDesc.cylinder(1.5, 0.35 * sc).setTranslation(sp.x, p.y + 1.4, sp.z).setFriction(0.6));
-  });
-  addChunked(scene, parts, items, { cell: 120, maxDist });
-}
-
-// ---------------------------------------------------------------------------
-// Rocks
-function placeRocks(scene, world, rocks, count) {
-  // photo-scanned rocks (Poly Haven), each about 1 m across with its base at y = 0
-  const variants = rocks.map((r) => r.geometry);
-  const spots = [];
-  // clusters near the headlands, along the waterline and among dunes
-  for (let i = 0; i < count; i++) {
-    const side = rnd() < 0.5 ? -1 : 1;
-    let x, z, scale;
-    const kind = rnd();
-    if (kind < 0.55) {
-      x = side * range(420, 560);
-      z = shoreZ(x) + range(-40, 60);
-      scale = range(0.8, 3.2);
-    } else if (kind < 0.8) {
-      x = range(-400, 400);
-      z = shoreZ(x) + range(-4, 25);
-      scale = range(0.4, 1.4);
-      if (noise(x * 0.02, 3) < 0.25) continue;
-    } else {
-      x = range(-500, 500);
-      z = shoreZ(x) - range(90, 300);
-      scale = range(0.5, 2.2);
-    }
-    if (nearSpawn(x, z, 25)) continue;
-    spots.push({ x, z, scale, v: Math.floor(rnd() * variants.length) });
-  }
-  const q = new THREE.Quaternion(), e = new THREE.Euler();
-  variants.forEach((geo, vi) => {
-    const mine = spots.filter((s) => s.v === vi);
-    const items = [];
-    const verts = geo.attributes.position.array;
-    const stride = Math.max(1, Math.floor(verts.length / 3 / 200));
-    mine.forEach((sp) => {
-      e.set(range(-0.2, 0.2), range(0, Math.PI * 2), range(-0.2, 0.2));
-      q.setFromEuler(e);
-      const size = sp.scale * 2;
-      const pos = new THREE.Vector3(sp.x, getHeight(sp.x, sp.z) - size * 0.12, sp.z);
-      const scl = new THREE.Vector3(size, size * range(0.7, 1.1), size);
-      items.push({ matrix: new THREE.Matrix4().compose(pos, q, scl) });
-      // collider shaped like the rock (about 200 of its points)
-      const pts = [];
-      const tmp = new THREE.Vector3();
-      for (let k = 0; k < verts.length / 3; k += stride) {
-        tmp.set(verts[k * 3], verts[k * 3 + 1], verts[k * 3 + 2]).multiply(scl).applyQuaternion(q);
-        pts.push(tmp.x, tmp.y, tmp.z);
-      }
-      const desc = RAPIER.ColliderDesc.convexHull(new Float32Array(pts));
-      if (desc) world.createCollider(desc.setTranslation(pos.x, pos.y, pos.z).setFriction(0.7));
-    });
-    addChunked(scene, [rocks[vi]], items, { cell: 150 });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Dune grass: "Dry grass" by Pixel-bit (Sketchfab, CC-BY). Each instance is a patch of 7 clumps.
-function placeGrass(scene, parts, count) {
-  const { geometry, material } = parts[0];
-  // foliage trick: light the grass like the ground beneath it, so thin cards never turn dark
-  const nrm = geometry.attributes.normal;
-  for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0);
-  material.color.setRGB(1.15, 1.05, 0.85);
-  // cut-out instead of blending, so thousands of patches don't need sorting
-  material.transparent = false;
-  material.depthWrite = true;
-  material.alphaTest = 0.35;
-  material.alphaToCoverage = true;
-  material.side = THREE.DoubleSide;
-  addWind(material, 0.12, 0.8);
-
-  const items = [];
-  const q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
-  let n = 0, tries = 0;
-  while (n < count && tries++ < 200000) {
-    const x = range(-600, 600);
-    const u = range(40, 330);
-    const z = shoreZ(x) - u;
-    const patch = fbm(noise, x * 0.03, z * 0.03, 2);
-    if (patch < 0.05) continue;
-    if (getNormal(x, z).y < 0.88) continue;
-    if (nearSpawn(x, z, 10)) continue;
-    // patches grow in groups
-    const group = 2 + Math.floor(rnd() * 5);
-    for (let c = 0; c < group && n < count; c++) {
-      const cx = x + range(-3, 3), cz = z + range(-3, 3);
-      p.set(cx, getHeight(cx, cz) - 0.04, cz);
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * Math.PI * 2);
-      const sc = range(1.4, 2.4) * (0.75 + patch);
-      s.set(sc, sc * range(0.8, 1.3), sc);
-      items.push({
-        matrix: new THREE.Matrix4().compose(p, q, s),
-        color: new THREE.Color(range(0.85, 1.1), range(0.85, 1.05), range(0.75, 1.0)),
-      });
-      n++;
-    }
-  }
-  // grass is tiny far away, so tiles beyond ~220 m are skipped entirely
-  addChunked(scene, [{ geometry, material }], items, { cell: 60, castShadow: false, maxDist: 220 });
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +138,11 @@ function plankTexture() {
 }
 
 // A wooden jump ramp. `yaw` is the direction you drive to jump.
-function placeRamp(scene, world, x, z, yaw, length = 7, height = 1.5, width = 4) {
+const rampGeometries = new Map();
+let rampMaterial = null;
+function rampGeometry(length, height, width) {
+  const key = `${length},${height},${width}`;
+  if (rampGeometries.has(key)) return rampGeometries.get(key);
   const shape = new THREE.Shape();
   shape.moveTo(0, 0);
   shape.lineTo(length, 0);
@@ -325,22 +154,30 @@ function placeRamp(scene, world, x, z, yaw, length = 7, height = 1.5, width = 4)
   geo.rotateY(-Math.PI / 2);
   const uvs = geo.attributes.uv;
   for (let i = 0; i < uvs.count; i++) uvs.setXY(i, uvs.getX(i) * 0.3, uvs.getY(i) * 0.3);
-  const mat = new THREE.MeshStandardMaterial({ map: plankTexture(), roughness: 0.85 });
-  const ramp = new THREE.Mesh(geo, mat);
-  const y = Math.min(getHeight(x, z - 3), getHeight(x, z + 3), getHeight(x - 2, z), getHeight(x + 2, z)) - 0.05;
+  const flat = new Float32Array(geo.toNonIndexed().attributes.position.array);
+  const entry = { geo, flat, order: Uint32Array.from({ length: flat.length / 3 }, (_, i) => i) };
+  rampGeometries.set(key, entry);
+  return entry;
+}
+
+// returns the ramp mesh and a function that makes its physics collider
+function makeRamp(x, z, yaw, length = 7, height = 1.5, width = 4) {
+  rampMaterial ||= new THREE.MeshStandardMaterial({ map: plankTexture(), roughness: 0.85 });
+  const { geo, flat, order } = rampGeometry(length, height, width);
+  const ramp = new THREE.Mesh(geo, rampMaterial);
+  // sit it on the lowest point of the sand under it
+  let y = Infinity;
+  for (const [dx, dz] of [[0, -3], [0, 3], [-2, 0], [2, 0], [0, 0]]) {
+    const c = Math.cos(yaw), s2 = Math.sin(yaw);
+    y = Math.min(y, getHeight(x + dx * c + dz * s2, z - dx * s2 + dz * c));
+  }
+  y -= 0.05;
   ramp.position.set(x, y, z);
   ramp.rotation.y = yaw;
   ramp.castShadow = ramp.receiveShadow = true;
-  scene.add(ramp);
   const q = new THREE.Quaternion().setFromEuler(ramp.rotation);
-  const flat = new Float32Array((geo.index ? geo.toNonIndexed() : geo).attributes.position.array);
-  const order = Uint32Array.from({ length: flat.length / 3 }, (_, i) => i);
-  world.createCollider(
-    RAPIER.ColliderDesc.trimesh(flat, order)
-      .setTranslation(x, y, z)
-      .setRotation(q)
-      .setFriction(0.8)
-  );
+  const collider = () => RAPIER.ColliderDesc.trimesh(flat, order).setTranslation(x, y, z).setRotation(q).setFriction(0.8);
+  return { mesh: ramp, collider };
 }
 
 function stripeTexture(colors) {
@@ -395,39 +232,221 @@ function placeUmbrellas(scene, world) {
 }
 
 // ---------------------------------------------------------------------------
-export function createProps(scene, world, assets, quality) {
-  placePalms(scene, world, assets.palm, quality.palms, quality.palmDistance);
-  placeRocks(scene, world, assets.rocks, quality.rocks);
-  placeGrass(scene, assets.grass, quality.grass);
-  placeDriftwood(scene, world);
-  placeLifeguardTower(scene, world, 95);
-  placeLifeguardTower(scene, world, -330);
-  placeRamp(scene, world, -70, shoreZ(-70) - 12, Math.PI / 2);
-  placeRamp(scene, world, 230, shoreZ(230) - 14, -Math.PI / 2, 9, 2.2, 5);
-  placeRamp(scene, world, 40, shoreZ(40) - 60, Math.PI, 6, 1.2, 4);
-  placeUmbrellas(scene, world);
+// The endless world is cut into 256 m tiles. A worker decides what grows in each tile;
+// here we turn that into instanced meshes, and add physics colliders only near the buggy.
+const TILE = 256;
+const COLLIDE_IN = 300, COLLIDE_OUT = 420;
 
-  // invisible walls at the edge of the world
-  const P = TERRAIN.play;
-  const walls = [
-    [(P.minX + P.maxX) / 2, P.minZ, (P.maxX - P.minX) / 2, 2],
-    [(P.minX + P.maxX) / 2, P.maxZ, (P.maxX - P.minX) / 2, 2],
-    [P.minX, (P.minZ + P.maxZ) / 2, 2, (P.maxZ - P.minZ) / 2],
-    [P.maxX, (P.minZ + P.maxZ) / 2, 2, (P.maxZ - P.minZ) / 2],
-  ];
-  for (const [x, z, hx, hz] of walls) {
-    world.createCollider(RAPIER.ColliderDesc.cuboid(hx, 200, hz).setTranslation(x, 0, z));
+export class PropSystem {
+  constructor(scene, world, pool, assets, quality, boost) {
+    this.scene = scene;
+    this.world = world;
+    this.pool = pool;
+    this.assets = assets;
+    this.quality = quality;
+    this.boost = boost;
+    this.tiles = new Map();
+    this.frame = 0;
+
+    for (const part of [...assets.palm, ...assets.palmFar]) {
+      const m = part.material;
+      if ((m.alphaTest > 0 || m.transparent) && !m.userData.windy) {
+        // the fronds sway in the wind and get smooth cut-out edges
+        m.alphaToCoverage = true;
+        m.side = THREE.DoubleSide;
+        addWind(m, 0.18, 6);
+        m.userData.windy = true;
+      }
+    }
+    // dune grass: light it like the ground beneath it, so thin cards never turn dark
+    const grass = assets.grass[0];
+    const nrm = grass.geometry.attributes.normal;
+    for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0);
+    grass.material.color.setRGB(1.15, 1.05, 0.85);
+    grass.material.transparent = false; // cut-out instead of blending: no sorting needed
+    grass.material.depthWrite = true;
+    grass.material.alphaTest = 0.35;
+    grass.material.alphaToCoverage = true;
+    grass.material.side = THREE.DoubleSide;
+    addWind(grass.material, 0.12, 0.8);
+
+    // hand-placed things around the start
+    placeDriftwood(scene, world);
+    placeLifeguardTower(scene, world, 95);
+    placeLifeguardTower(scene, world, -330);
+    for (const [x, u, yaw, l, h, w] of [[-70, 12, Math.PI / 2], [230, 14, -Math.PI / 2, 9, 2.2, 5], [40, 60, Math.PI, 6, 1.2, 4]]) {
+      const r = makeRamp(x, shoreZ(x) - u, yaw, l, h, w);
+      scene.add(r.mesh);
+      world.createCollider(r.collider());
+    }
+    placeUmbrellas(scene, world);
   }
 
-  return {
-    spawn: SPAWN,
-    update(t, cameraPosition) {
-      wind.value = t;
-      for (const c of chunks) {
-        if (c.maxDist === Infinity) continue;
-        const visible = c.center.distanceTo(cameraPosition) < c.maxDist;
-        for (const im of c.meshes) im.visible = visible;
+  instanced(parts, matrices, colors, castShadow) {
+    return parts.map(({ geometry, material }) => {
+      const im = new THREE.InstancedMesh(geometry, material, matrices.length);
+      matrices.forEach((m, i) => {
+        im.setMatrixAt(i, m);
+        if (colors) im.setColorAt(i, colors[i]);
+      });
+      im.castShadow = castShadow;
+      im.receiveShadow = true;
+      im.computeBoundingSphere();
+      return im;
+    });
+  }
+
+  build(t, d) {
+    const q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), e = new THREE.Euler();
+    const Y = new THREE.Vector3(0, 1, 0);
+    // palms: a detailed and a simple version, swapped by distance
+    t.palmMatrices = [];
+    for (let i = 0; i < d.palms.length; i += 6) {
+      const [x, y, z, yaw, sc, sy] = d.palms.subarray(i, i + 6);
+      t.palmMatrices.push(new THREE.Matrix4().compose(p.set(x, y, z), q.setFromAxisAngle(Y, yaw), s.set(sc, sy, sc)));
+    }
+    if (t.palmMatrices.length) {
+      t.palmNear = this.instanced(this.assets.palm, t.palmMatrices, null, true);
+      t.palmFar = this.instanced(this.assets.palmFar, t.palmMatrices, null, true);
+    }
+    // rocks, one instanced mesh per rock model
+    t.rockItems = [];
+    const byVariant = [[], [], []];
+    for (let i = 0; i < d.rocks.length; i += 9) {
+      const [x, y, z, rx, ry, rz, size, sy, v] = d.rocks.subarray(i, i + 9);
+      const m = new THREE.Matrix4().compose(p.set(x, y, z), q.setFromEuler(e.set(rx, ry, rz)), s.set(size, size * sy, size));
+      byVariant[v].push(m);
+      t.rockItems.push({ v, pos: p.clone(), q: q.clone(), scale: s.clone() });
+    }
+    t.rocks = byVariant.flatMap((list, v) => (list.length ? this.instanced([this.assets.rocks[v]], list, null, true) : []));
+    // ramps
+    t.ramps = [];
+    for (let i = 0; i < d.ramps.length; i += 6) {
+      const [x, z, yaw, l, h, w] = d.ramps.subarray(i, i + 6);
+      t.ramps.push(makeRamp(x, z, yaw, l, h, w));
+    }
+    for (const r of t.ramps) this.scene.add(r.mesh);
+    for (const m of t.rocks) this.scene.add(m);
+    t.grassData = d.grass;
+    t.grass = null;
+    t.colliders = null;
+    if (this.boost) this.boost.addTile(t.key, d.pads);
+  }
+
+  makeGrass(t) {
+    const d = t.grassData;
+    const q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+    const Y = new THREE.Vector3(0, 1, 0);
+    const matrices = [], colors = [];
+    for (let i = 0; i < d.length; i += 9) {
+      matrices.push(new THREE.Matrix4().compose(p.set(d[i], d[i + 1], d[i + 2]), q.setFromAxisAngle(Y, d[i + 3]), s.set(d[i + 4], d[i + 5], d[i + 4])));
+      colors.push(new THREE.Color(d[i + 6], d[i + 7], d[i + 8]));
+    }
+    t.grass = matrices.length ? this.instanced(this.assets.grass, matrices, colors, false)[0] : null;
+    if (t.grass) this.scene.add(t.grass);
+  }
+
+  addColliders(t) {
+    t.colliders = [];
+    const add = (desc) => desc && t.colliders.push(this.world.createCollider(desc));
+    const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    for (const m of t.palmMatrices) {
+      m.decompose(p, q, s);
+      add(RAPIER.ColliderDesc.cylinder(1.5, 0.35 * s.x).setTranslation(p.x, p.y + 1.4, p.z).setFriction(0.6));
+    }
+    for (const r of t.rockItems) add(rockCollider(this.assets.rocks[r.v].geometry, r.pos, r.q, r.scale));
+    for (const r of t.ramps) add(r.collider());
+  }
+
+  removeColliders(t) {
+    for (const c of t.colliders) this.world.removeCollider(c, false);
+    t.colliders = null;
+  }
+
+  unload(t) {
+    const all = [...(t.palmNear || []), ...(t.palmFar || []), ...(t.rocks || []), t.grass].filter(Boolean);
+    for (const m of all) {
+      this.scene.remove(m);
+      m.dispose();
+    }
+    for (const r of t.ramps || []) this.scene.remove(r.mesh);
+    if (t.colliders) this.removeColliders(t);
+    if (this.boost) this.boost.removeTile(t.key);
+  }
+
+  update(time, camera, focus) {
+    wind.value = time;
+    this.frame++;
+    const Q = this.quality;
+    const reach = Q.propDistance + TILE;
+    // ask for nearby tiles
+    if (this.frame % 10 === 0) {
+      for (let i = Math.floor((focus.x - reach) / TILE); i <= Math.floor((focus.x + reach) / TILE); i++) {
+        for (let j = Math.floor((focus.z - reach) / TILE); j <= Math.floor((focus.z + reach) / TILE); j++) {
+          const key = i + ',' + j;
+          if (this.tiles.has(key)) continue;
+          const dist = Math.hypot((i + 0.5) * TILE - focus.x, (j + 0.5) * TILE - focus.z);
+          if (dist > reach) continue;
+          const t = { key, i, j, ready: false };
+          this.tiles.set(key, t);
+          this.pool
+            .run({ type: 'props', tx: i, tz: j, size: TILE, spawn: SPAWN }, dist * 1.2 + 30, () => this.tiles.get(key) === t)
+            .then((d) => {
+              if (this.tiles.get(key) !== t) return;
+              this.build(t, d);
+              t.ready = true;
+            })
+            .catch(() => this.tiles.get(key) === t && this.tiles.delete(key));
+        }
       }
-    },
-  };
+    }
+    // show, hide, add colliders and grass by distance
+    for (const [key, t] of this.tiles) {
+      const cx = (t.i + 0.5) * TILE, cz = (t.j + 0.5) * TILE;
+      const dist = Math.hypot(cx - focus.x, cz - focus.z);
+      if (dist > reach + TILE) {
+        if (t.ready) this.unload(t);
+        this.tiles.delete(key);
+        continue;
+      }
+      if (!t.ready) continue;
+      const camDist = Math.max(0, Math.hypot(cx - camera.position.x, cz - camera.position.z) - TILE * 0.7);
+      if (t.palmNear) {
+        const near = camDist < 220;
+        const visible = camDist < Q.propDistance;
+        swap(this.scene, t.palmNear, near && visible);
+        swap(this.scene, t.palmFar, !near && visible);
+      }
+      const grassWanted = camDist < Q.grassDistance;
+      if (grassWanted && t.grassData.length && !t.grass) this.makeGrass(t);
+      else if (!grassWanted && t.grass) {
+        this.scene.remove(t.grass);
+        t.grass.dispose();
+        t.grass = null;
+      }
+      if (!t.colliders && dist < COLLIDE_IN) this.addColliders(t);
+      else if (t.colliders && dist > COLLIDE_OUT) this.removeColliders(t);
+    }
+  }
+}
+
+function swap(scene, meshes, on) {
+  for (const m of meshes) {
+    if (on && !m.parent) scene.add(m);
+    else if (!on && m.parent) scene.remove(m);
+  }
+}
+
+// a convex collider shaped like the rock (about 200 of its points)
+function rockCollider(geo, pos, q, scl) {
+  const verts = geo.attributes.position.array;
+  const stride = Math.max(1, Math.floor(verts.length / 3 / 200));
+  const pts = [];
+  const tmp = new THREE.Vector3();
+  for (let k = 0; k < verts.length / 3; k += stride) {
+    tmp.set(verts[k * 3], verts[k * 3 + 1], verts[k * 3 + 2]).multiply(scl).applyQuaternion(q);
+    pts.push(tmp.x, tmp.y, tmp.z);
+  }
+  const desc = RAPIER.ColliderDesc.convexHull(new Float32Array(pts));
+  return desc && desc.setTranslation(pos.x, pos.y, pos.z).setFriction(0.7);
 }

@@ -35,7 +35,7 @@ export async function loadAssets(renderer, onProgress = () => {}) {
 
   const [
     dryD, dryN, dryR, altD, altN, wetD, wetN, waterN,
-    rock09, rock07, boulder, hdr, palm, grass,
+    rock09, rock07, boulder, hdr, palm, palmFar, grass,
   ] = await Promise.all([
     tex('aerial_beach_01_diffuse.jpg', true),
     tex('aerial_beach_01_nor_gl.jpg'),
@@ -50,6 +50,7 @@ export async function loadAssets(renderer, onProgress = () => {}) {
     gltfLoader.loadAsync(BASE + 'models/boulder_05.glb'),
     hdrLoader.loadAsync(BASE + 'hdri/beach_1k.hdr'),
     gltfLoader.loadAsync('models/palm.glb'),
+    gltfLoader.loadAsync('models/palm_far.glb'),
     gltfLoader.loadAsync('models/grass.glb'),
   ]);
 
@@ -83,8 +84,13 @@ export async function loadAssets(renderer, onProgress = () => {}) {
     return parts;
   };
 
+  const palmParts = partsFrom(palm);
+  // the far-away palm is a simplified copy of the same model; it shares the textures
+  const palmFarParts = partsFrom(palmFar).map((p, i) => ({ geometry: p.geometry, material: palmParts[i].material }));
+
   return {
-    palm: partsFrom(palm),
+    palm: palmParts,
+    palmFar: palmFarParts,
     grass: partsFrom(grass),
     sand: {
       dryD, dryN, dryR, altD, altN, wetD, wetN,

@@ -1,239 +1,361 @@
-// The island: a curved sandy bay between two rocky headlands.
-// The sea is towards +Z, the land towards -Z. Water level is y = 0.
+// The endless ground: built around the player while you drive.
+//  - The visible ground is a quadtree of patches: small detailed ones nearby, big coarse ones far away.
+//  - The physics ground is a ring of 128 m tiles around the buggy.
+// The shape itself lives in heightfield.js; the slow work happens in web workers (worldWorker.js).
 import * as THREE from 'three';
-import { createNoise2D, fbm, smoothstep, lerp } from './noise.js';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { terrainFunction, shoreZ } from './heightfield.js';
 import { createSandDetailTexture } from './textures.js';
 
-export const TERRAIN = {
-  size: 1600, // meters
-  res: 640,   // grid cells per side (2.5 m per cell)
-  // the area you are allowed to drive in
-  play: { minX: -600, maxX: 600, minZ: -540, maxZ: 300 },
-};
-
-const nA = createNoise2D(11);
-const nB = createNoise2D(23);
-const nC = createNoise2D(37);
-
-// Where the waterline is for a given x (makes the bay curvy)
-export function shoreZ(x) {
-  return 38 * Math.sin(x * 0.0045 + 0.6) + 16 * Math.sin(x * 0.012 + 1.3) + 5 * Math.sin(x * 0.033 + 2.1);
-}
-
-// The height of the ground at any point. Change this to reshape the world!
-export function terrainFunction(x, z) {
-  const d = z - shoreZ(x); // distance out to sea (negative = on land)
-  const u = -d;            // distance inland
-  let h;
-  if (d > 0) {
-    // sea floor: gentle slope getting deeper, with a sandbar where waves break
-    h = -0.034 * d - 0.00011 * d * d;
-    h += 0.55 * Math.exp(-(((d - 48) / 13) ** 2));
-    h = Math.max(h, -45);
-  } else {
-    // beach rising up from the water
-    h = 2.6 * (1 - Math.exp(-u / 70)) + 0.01 * u;
-    // sand dunes behind the beach
-    const duneMask = smoothstep(55, 125, u) * (1 - 0.5 * smoothstep(260, 340, u));
-    const ridge = 1 - Math.abs(nA(x * 0.006, u * 0.011));
-    h += duneMask * (ridge * ridge * 8 + fbm(nB, x * 0.012, z * 0.012, 3) * 2.5);
-    // grassy hills and mountains further inland
-    h += smoothstep(220, 480, u) * (18 + 14 * fbm(nC, x * 0.004, z * 0.004, 4));
-    h += smoothstep(480, 760, u) * 55;
-    // small bumps you feel while driving
-    h += 0.12 * nC(x * 0.15, z * 0.15) * smoothstep(-2, 8, u);
-  }
-  // rocky headlands at both ends of the bay
-  const head = smoothstep(470, 700, Math.abs(x)) * smoothstep(300, 60, d);
-  if (head > 0) {
-    const cliff = 26 + 12 * fbm(nB, x * 0.01, z * 0.01, 4) + 3 * fbm(nA, x * 0.05, z * 0.05, 3);
-    h = lerp(h, Math.max(h, cliff), head);
-  }
-  return h;
-}
+export { shoreZ, terrainFunction };
 
 // ---------------------------------------------------------------------------
-// Sample the function on a grid once; everything else uses this grid.
-const N = TERRAIN.res, S = TERRAIN.size, STEP = S / N, HALF = S / 2;
-export const heights = new Float32Array((N + 1) * (N + 1));
-for (let j = 0; j <= N; j++) {
-  for (let i = 0; i <= N; i++) {
-    heights[j * (N + 1) + i] = terrainFunction(-HALF + i * STEP, -HALF + j * STEP);
-  }
-}
-
-// Ground height at any (x, z), smoothly interpolated
-export function getHeight(x, z) {
-  const fx = Math.min(N - 1e-4, Math.max(0, (x + HALF) / STEP));
-  const fz = Math.min(N - 1e-4, Math.max(0, (z + HALF) / STEP));
-  const i = Math.floor(fx), j = Math.floor(fz);
-  const tx = fx - i, tz = fz - j;
-  const r = N + 1;
-  const a = heights[j * r + i], b = heights[j * r + i + 1];
-  const c = heights[(j + 1) * r + i], d = heights[(j + 1) * r + i + 1];
-  return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
-}
-
-export function getNormal(x, z, target = new THREE.Vector3()) {
-  const e = STEP;
-  const hl = getHeight(x - e, z), hr = getHeight(x + e, z);
-  const hd = getHeight(x, z - e), hu = getHeight(x, z + e);
-  return target.set(hl - hr, 2 * e, hd - hu).normalize();
-}
-
-// ---------------------------------------------------------------------------
-// Visual mesh
-export function createTerrainMesh(sand, quality) {
-  const r = N + 1;
-  // on low quality, use every other grid point for the visible mesh (physics keeps full detail)
-  const step = quality.terrainStep;
-  const M = Math.floor(N / step), rr = M + 1;
-  const positions = new Float32Array(rr * rr * 3);
-  const normals = new Float32Array(rr * rr * 3);
-  const uvs = new Float32Array(rr * rr * 2);
-  const colors = new Float32Array(rr * rr * 3);
-  const surface = new Float32Array(rr * rr * 2); // x: wetness, y: how "sandy" it is
-
-  const c = new THREE.Color();
-  const dry = new THREE.Color().setRGB(0.87, 0.77, 0.6, THREE.SRGBColorSpace);
-  const dryWarm = new THREE.Color().setRGB(0.84, 0.7, 0.52, THREE.SRGBColorSpace);
-  const underwater = new THREE.Color().setRGB(0.66, 0.62, 0.5, THREE.SRGBColorSpace);
-  const grass = new THREE.Color().setRGB(0.4, 0.45, 0.22, THREE.SRGBColorSpace);
-  const scrub = new THREE.Color().setRGB(0.52, 0.5, 0.33, THREE.SRGBColorSpace);
-  const rock = new THREE.Color().setRGB(0.47, 0.43, 0.39, THREE.SRGBColorSpace);
-  const rockDark = new THREE.Color().setRGB(0.32, 0.3, 0.28, THREE.SRGBColorSpace);
-  const n = new THREE.Vector3();
-
-  for (let J = 0; J <= M; J++) {
-    for (let I = 0; I <= M; I++) {
-      const i = I * step, j = J * step;
-      const k = J * rr + I; // index in the mesh
-      const x = -HALF + i * STEP, z = -HALF + j * STEP;
-      const h = heights[j * r + i];
-      positions[k * 3] = x;
-      positions[k * 3 + 1] = h;
-      positions[k * 3 + 2] = z;
-
-      const hl = heights[j * r + Math.max(0, i - 1)], hr = heights[j * r + Math.min(N, i + 1)];
-      const hd = heights[Math.max(0, j - 1) * r + i], hu = heights[Math.min(N, j + 1) * r + i];
-      n.set(hl - hr, 2 * STEP, hd - hu).normalize();
-      normals[k * 3] = n.x;
-      normals[k * 3 + 1] = n.y;
-      normals[k * 3 + 2] = n.z;
-
-      uvs[k * 2] = x * 0.25;
-      uvs[k * 2 + 1] = z * 0.25;
-
-      const u = shoreZ(x) - z; // distance inland
-      const slope = 1 - n.y;
-      // base sand colour with large patches of variation
-      c.copy(dry).lerp(dryWarm, smoothstep(-0.4, 0.6, fbm(nB, x * 0.015, z * 0.015, 3)));
-      c.lerp(underwater, smoothstep(0, -3, h));
-      let sandy = 1;
-      // vegetation inland
-      const veg = smoothstep(160, 300, u) * smoothstep(0.35, 0.1, slope);
-      const vegNoise = smoothstep(-0.3, 0.4, fbm(nA, x * 0.01, z * 0.01, 3));
-      if (veg > 0) {
-        c.lerp(scrub, veg * 0.8);
-        c.lerp(grass, veg * vegNoise * 0.8);
-        sandy -= veg * 0.9;
-      }
-      // rocks on steep slopes and headlands
-      const rockiness = Math.max(
-        smoothstep(0.28, 0.5, slope) * smoothstep(20, 60, u + Math.abs(x) * 0.2),
-        smoothstep(480, 640, Math.abs(x)) * smoothstep(1.5, 5, h) * smoothstep(0.08, 0.25, slope)
-      );
-      if (rockiness > 0) {
-        c.lerp(rock, rockiness);
-        c.lerp(rockDark, rockiness * smoothstep(0.4, 0.8, slope) * 0.7);
-        sandy -= rockiness;
-      }
-      colors[k * 3] = c.r;
-      colors[k * 3 + 1] = c.g;
-      colors[k * 3 + 2] = c.b;
-
-      // wet sand near the water line
-      surface[k * 2] = 1 - smoothstep(0.1, 0.9, h);
-      surface[k * 2 + 1] = Math.max(0, sandy);
+// A few workers that build the world in the background, nearest pieces first
+export class WorkerPool {
+  constructor(count) {
+    this.idle = [];
+    this.queue = [];
+    this.pending = new Map();
+    this.nextId = 1;
+    for (let i = 0; i < count; i++) {
+      const w = new Worker(new URL('./worldWorker.js', import.meta.url), { type: 'module' });
+      w.onmessage = (e) => {
+        const { resolve } = this.pending.get(e.data.id);
+        this.pending.delete(e.data.id);
+        this.idle.push(w);
+        resolve(e.data);
+        this.pump();
+      };
+      this.idle.push(w);
     }
   }
 
-  const indices = new Uint32Array(M * M * 6);
+  // priority: lower runs sooner. stillWanted(): checked right before the job starts
+  run(job, priority = 0, stillWanted = () => true) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ job, priority, stillWanted, resolve, reject });
+      this.pump();
+    });
+  }
+
+  pump() {
+    while (this.idle.length && this.queue.length) {
+      let best = 0;
+      for (let i = 1; i < this.queue.length; i++) if (this.queue[i].priority < this.queue[best].priority) best = i;
+      const task = this.queue.splice(best, 1)[0];
+      if (!task.stillWanted()) {
+        task.reject(new Error('cancelled'));
+        continue;
+      }
+      const w = this.idle.pop();
+      const id = this.nextId++;
+      this.pending.set(id, task);
+      w.postMessage({ ...task.job, id });
+    }
+  }
+
+  get busy() {
+    return this.queue.length + this.pending.size;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Physics ground: 128 m tiles with a point every 2 m, kept around the buggy
+const PHYS = { size: 128, cells: 64, keep: 260, drop: 420 };
+const physTiles = new Map(); // "i,j" -> { heights, collider, pending, i, j }
+const PN = PHYS.cells + 1, PSTEP = PHYS.size / PHYS.cells;
+let physIndices = null;
+
+function physIndexBuffer() {
+  if (physIndices) return physIndices;
+  physIndices = new Uint32Array(PHYS.cells * PHYS.cells * 6);
   let p = 0;
-  for (let j = 0; j < M; j++) {
-    for (let i = 0; i < M; i++) {
-      const a = j * rr + i, b = a + 1, cc = a + rr, d = cc + 1;
-      indices.set([a, cc, b, b, cc, d], p);
+  for (let j = 0; j < PHYS.cells; j++) {
+    for (let i = 0; i < PHYS.cells; i++) {
+      const a = j * PN + i, b = a + 1, c = a + PN, d = c + 1;
+      physIndices.set([a, c, b, b, c, d], p);
       p += 6;
     }
   }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geo.setAttribute('surface', new THREE.BufferAttribute(surface, 2));
-  geo.setIndex(new THREE.BufferAttribute(indices, 1));
-  geo.computeBoundingSphere();
-
-  const material = createSandMaterial(sand, quality.sandDetail);
-  const mesh = new THREE.Mesh(geo, material);
-  mesh.receiveShadow = true;
-  return mesh;
+  return physIndices;
 }
 
-// Triangle data for the physics engine (only the drivable part, to save memory)
-export function createPhysicsMeshData() {
-  const margin = 80;
-  const i0 = Math.max(0, Math.floor((TERRAIN.play.minX - margin + HALF) / STEP));
-  const i1 = Math.min(N, Math.ceil((TERRAIN.play.maxX + margin + HALF) / STEP));
-  const j0 = Math.max(0, Math.floor((TERRAIN.play.minZ - margin + HALF) / STEP));
-  const j1 = Math.min(N, Math.ceil((TERRAIN.play.maxZ + margin + HALF) / STEP));
-  const w = i1 - i0 + 1, hgt = j1 - j0 + 1;
-  const vertices = new Float32Array(w * hgt * 3);
-  for (let j = j0; j <= j1; j++) {
-    for (let i = i0; i <= i1; i++) {
-      const k = (j - j0) * w + (i - i0);
-      vertices[k * 3] = -HALF + i * STEP;
-      vertices[k * 3 + 1] = heights[j * (N + 1) + i];
-      vertices[k * 3 + 2] = -HALF + j * STEP;
-    }
-  }
-  const indices = new Uint32Array((w - 1) * (hgt - 1) * 6);
-  let p = 0;
-  for (let j = 0; j < hgt - 1; j++) {
-    for (let i = 0; i < w - 1; i++) {
-      const a = j * w + i, b = a + 1, c = a + w, d = c + 1;
-      indices[p++] = a; indices[p++] = c; indices[p++] = b;
-      indices[p++] = b; indices[p++] = c; indices[p++] = d;
-    }
-  }
-  return { vertices, indices };
+// Ground height at any (x, z). Near the buggy this matches the physics triangles exactly.
+export function getHeight(x, z) {
+  const i = Math.floor(x / PHYS.size), j = Math.floor(z / PHYS.size);
+  const t = physTiles.get(i + ',' + j);
+  if (!t || !t.heights) return terrainFunction(x, z);
+  const fx = (x - i * PHYS.size) / PSTEP, fz = (z - j * PHYS.size) / PSTEP;
+  const ci = Math.min(PHYS.cells - 1, Math.floor(fx)), cj = Math.min(PHYS.cells - 1, Math.floor(fz));
+  const tx = fx - ci, tz = fz - cj;
+  const h = t.heights;
+  const a = h[cj * PN + ci], b = h[cj * PN + ci + 1], c = h[(cj + 1) * PN + ci], d = h[(cj + 1) * PN + ci + 1];
+  // same two triangles per cell as the physics mesh: (a, c, b) and (b, c, d)
+  if (tx + tz < 1) return a + (b - a) * tx + (c - a) * tz;
+  return d + (c - d) * (1 - tx) + (b - d) * (1 - tz);
 }
 
-// Height map texture for the water shader (so it knows how deep the water is)
-export function createHeightTexture(size = 1024) {
-  const data = new Float32Array(size * size);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      data[y * size + x] = getHeight(-HALF + (x / (size - 1)) * S, -HALF + (y / (size - 1)) * S);
+export function getNormal(x, z, target = new THREE.Vector3()) {
+  const e = 1;
+  return target.set(getHeight(x - e, z) - getHeight(x + e, z), 2 * e, getHeight(x, z - e) - getHeight(x, z + e)).normalize();
+}
+
+export class PhysicsTerrain {
+  constructor(world, pool) {
+    this.world = world;
+    this.pool = pool;
+  }
+
+  wanted(i, j, points) {
+    const cx = (i + 0.5) * PHYS.size, cz = (j + 0.5) * PHYS.size;
+    let best = Infinity;
+    for (const p of points) best = Math.min(best, Math.hypot(cx - p.x, cz - p.z));
+    return best;
+  }
+
+  // points: places that need solid ground (the buggy now, and where it will be soon)
+  update(points) {
+    const r = PHYS.keep + PHYS.size;
+    for (const p of points) {
+      for (let i = Math.floor((p.x - r) / PHYS.size); i <= Math.floor((p.x + r) / PHYS.size); i++) {
+        for (let j = Math.floor((p.z - r) / PHYS.size); j <= Math.floor((p.z + r) / PHYS.size); j++) {
+          const key = i + ',' + j;
+          if (physTiles.has(key)) continue;
+          const dist = this.wanted(i, j, points);
+          if (dist > PHYS.keep) continue;
+          const tile = { i, j, heights: null, collider: null, pending: true };
+          physTiles.set(key, tile);
+          this.pool
+            .run({ type: 'phys', x0: i * PHYS.size, z0: j * PHYS.size, size: PHYS.size, cells: PHYS.cells }, dist - 1e5, () => physTiles.get(key) === tile)
+            .then((res) => {
+              tile.pending = false;
+              tile.heights = res.heights;
+            })
+            .catch(() => {});
+        }
+      }
+    }
+    for (const [key, t] of physTiles) {
+      const dist = this.wanted(t.i, t.j, points);
+      if (dist > PHYS.drop) {
+        if (t.collider) this.world.removeCollider(t.collider, false);
+        physTiles.delete(key);
+      } else if (t.heights && !t.collider && dist <= PHYS.keep + 60) {
+        this.addCollider(t);
+      }
     }
   }
-  const half = new Uint16Array(data.length);
-  for (let i = 0; i < data.length; i++) half[i] = THREE.DataUtils.toHalfFloat(data[i]);
-  const tex = new THREE.DataTexture(half, size, size, THREE.RedFormat, THREE.HalfFloatType);
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearFilter;
-  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.needsUpdate = true;
-  return tex;
+
+  addCollider(t) {
+    const v = new Float32Array(PN * PN * 3);
+    for (let j = 0; j < PN; j++) {
+      for (let i = 0; i < PN; i++) {
+        const k = j * PN + i;
+        v[k * 3] = i * PSTEP;
+        v[k * 3 + 1] = t.heights[k];
+        v[k * 3 + 2] = j * PSTEP;
+      }
+    }
+    const desc = RAPIER.ColliderDesc.trimesh(v, physIndexBuffer(), RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES)
+      .setTranslation(t.i * PHYS.size, 0, t.j * PHYS.size)
+      .setFriction(0.8);
+    t.collider = this.world.createCollider(desc);
+  }
+
+  // true when every tile near these points has its collider
+  readyAt(points) {
+    for (const p of points) {
+      for (const [dx, dz] of [[0, 0], [-40, 0], [40, 0], [0, -40], [0, 40]]) {
+        const t = physTiles.get(Math.floor((p.x + dx) / PHYS.size) + ',' + Math.floor((p.z + dz) / PHYS.size));
+        if (!t || !t.collider) return false;
+      }
+    }
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Visible ground: a quadtree of patches, each a grid of `cells` x `cells` squares
+const ROOT = 4096;
+const indexCache = new Map();
+function leafIndex(cells) {
+  if (indexCache.has(cells)) return indexCache.get(cells);
+  const n = cells + 1;
+  const idx = [];
+  for (let j = 0; j < cells; j++) {
+    for (let i = 0; i < cells; i++) {
+      const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  const edges = [(t) => t, (t) => (n - 1) * n + t, (t) => t * n, (t) => t * n + n - 1];
+  edges.forEach((edge, e) => {
+    for (let t = 0; t < cells; t++) {
+      const a = edge(t), b = edge(t + 1), c = n * n + e * n + t, d = c + 1;
+      // both windings, so the skirt shows from either side
+      idx.push(a, c, b, b, c, d, a, b, c, b, d, c);
+    }
+  });
+  const attr = new THREE.BufferAttribute(new Uint32Array(idx), 1);
+  indexCache.set(cells, attr);
+  return attr;
+}
+
+export class TerrainLOD {
+  constructor(scene, material, pool, quality) {
+    this.scene = scene;
+    this.material = material;
+    this.pool = pool;
+    this.cells = quality.terrainCells;      // squares per patch side
+    this.minSize = quality.terrainMinPatch; // smallest patch (m)
+    this.split = quality.terrainSplit;      // bigger = more detail further away
+    this.viewDist = quality.viewDistance;
+    this.leaves = new Map(); // key -> { x0, z0, size, mesh, pending, lastUsed }
+    this.shown = new Set();
+    this.desired = new Map();
+    this.frame = 0;
+    this.lastFocus = new THREE.Vector3(1e9, 0, 0);
+  }
+
+  key(x0, z0, size) {
+    return size + ':' + x0 + ',' + z0;
+  }
+
+  computeDesired(f) {
+    const out = new Map();
+    const visit = (x0, z0, size) => {
+      const dx = Math.max(0, Math.abs(f.x - (x0 + size / 2)) - size / 2);
+      const dz = Math.max(0, Math.abs(f.z - (z0 + size / 2)) - size / 2);
+      const dist = Math.hypot(dx, dz, Math.max(0, f.y - 60) * 0.5);
+      if (dist > this.viewDist) return;
+      if (size > this.minSize && dist < size * this.split) {
+        const h = size / 2;
+        visit(x0, z0, h);
+        visit(x0 + h, z0, h);
+        visit(x0, z0 + h, h);
+        visit(x0 + h, z0 + h, h);
+      } else {
+        out.set(this.key(x0, z0, size), { x0, z0, size, dist });
+      }
+    };
+    const r = this.viewDist;
+    for (let i = Math.floor((f.x - r) / ROOT); i <= Math.floor((f.x + r) / ROOT); i++) {
+      for (let j = Math.floor((f.z - r) / ROOT); j <= Math.floor((f.z + r) / ROOT); j++) visit(i * ROOT, j * ROOT, ROOT);
+    }
+    return out;
+  }
+
+  request(key, d) {
+    let leaf = this.leaves.get(key);
+    if (!leaf) {
+      leaf = { ...d, mesh: null, pending: false };
+      this.leaves.set(key, leaf);
+    }
+    leaf.lastUsed = this.frame;
+    if (leaf.mesh || leaf.pending) return leaf;
+    leaf.pending = true;
+    this.pool
+      .run({ type: 'leaf', x0: d.x0, z0: d.z0, size: d.size, cells: this.cells }, d.dist, () => this.desired.has(key))
+      .then((res) => {
+        leaf.pending = false;
+        leaf.mesh = this.buildMesh(leaf, res);
+      })
+      .catch(() => (leaf.pending = false));
+    return leaf;
+  }
+
+  buildMesh(leaf, res) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(res.position, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(res.normal, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(res.color, 3));
+    geo.setAttribute('surface', new THREE.BufferAttribute(res.surface, 2));
+    geo.setAttribute('uv', new THREE.BufferAttribute(res.uv, 2));
+    geo.setIndex(leafIndex(this.cells));
+    const s = leaf.size;
+    geo.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(s / 2, (res.minY + res.maxY) / 2, s / 2),
+      Math.hypot(s * 0.7072, (res.maxY - res.minY) / 2)
+    );
+    const mesh = new THREE.Mesh(geo, this.material);
+    mesh.position.set(leaf.x0, 0, leaf.z0);
+    mesh.receiveShadow = true;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    return mesh;
+  }
+
+  contains(a, b) {
+    return b.x0 >= a.x0 && b.z0 >= a.z0 && b.x0 + b.size <= a.x0 + a.size && b.z0 + b.size <= a.z0 + a.size;
+  }
+
+  update(focus, force = false) {
+    this.frame++;
+    if (!force && this.frame % 6 !== 0 && focus.distanceToSquared(this.lastFocus) < 64) return;
+    this.lastFocus.copy(focus);
+    this.desired = this.computeDesired(focus);
+    for (const [key, d] of this.desired) this.request(key, d);
+
+    // Swap patches without leaving holes: an old patch stays until everything that replaces it is ready
+    const desiredList = [...this.desired.entries()];
+    const ready = (k) => !!this.leaves.get(k)?.mesh;
+    const removable = new Map();
+    for (const key of this.shown) {
+      if (this.desired.has(key)) continue;
+      const old = this.leaves.get(key);
+      let ok = true;
+      for (const [dk, d] of desiredList) {
+        if ((this.contains(d, old) || this.contains(old, d)) && !ready(dk)) {
+          ok = false;
+          break;
+        }
+      }
+      removable.set(key, ok);
+    }
+    for (const [dk, d] of desiredList) {
+      if (this.shown.has(dk) || !ready(dk)) continue;
+      let blocked = false;
+      for (const [ok, can] of removable) {
+        const old = this.leaves.get(ok);
+        if (!can && (this.contains(d, old) || this.contains(old, d))) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) continue;
+      this.scene.add(this.leaves.get(dk).mesh);
+      this.shown.add(dk);
+    }
+    for (const [key, can] of removable) {
+      if (!can) continue;
+      this.scene.remove(this.leaves.get(key).mesh);
+      this.shown.delete(key);
+    }
+
+    // forget patches we haven't needed for a while
+    if (this.leaves.size > this.desired.size + 160) {
+      const spare = [...this.leaves.entries()]
+        .filter(([k, l]) => !this.shown.has(k) && !this.desired.has(k) && !l.pending)
+        .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+      for (const [k, l] of spare.slice(0, this.leaves.size - this.desired.size - 120)) {
+        l.mesh?.geometry.dispose();
+        this.leaves.delete(k);
+      }
+    }
+  }
+
+  // fraction of the wanted patches that are on screen
+  progress() {
+    let n = 0;
+    for (const k of this.desired.keys()) if (this.shown.has(k)) n++;
+    return this.desired.size ? n / this.desired.size : 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Sand made from photo-scanned textures. Each texture is sampled twice at different
 // sizes and angles and blended with large, slow noise so you can't see it repeat.
-function createSandMaterial(sand, detail) {
+export function createSandMaterial(sand, detail) {
   const material = new THREE.MeshStandardMaterial({
     vertexColors: true,
     map: createSandDetailTexture(), // only used for large-scale noise below

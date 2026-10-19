@@ -11,13 +11,14 @@ const PRESETS = {
     maxPixelRatio: 1.5,
     shadowMapSize: 4096,
     shadowRange: 70,
-    terrainStep: 1,        // 1 = every grid point, 2 = every other one
+    terrainCells: 64,      // squares per side of each ground patch
+    terrainMinPatch: 128,  // size of the most detailed patches (m)
+    terrainSplit: 1.3,     // bigger = detailed ground reaches further
+    viewDistance: 7000,    // how far the ground is drawn (m)
+    propDistance: 1400,    // palms and rocks (m)
     oceanSegments: 420,
     sandDetail: true,      // extra texture layers that hide repetition
-    palms: 150,
-    palmDistance: Infinity,
-    rocks: 120,
-    grass: 7000,
+    grassDistance: 220,
     particles: 4000,
   },
   low: {
@@ -26,13 +27,14 @@ const PRESETS = {
     maxPixelRatio: 1.25,
     shadowMapSize: 1024,
     shadowRange: 40,
-    terrainStep: 2,
+    terrainCells: 32,
+    terrainMinPatch: 128,
+    terrainSplit: 1.2,
+    viewDistance: 4000,
+    propDistance: 700,
     oceanSegments: 200,
     sandDetail: false,
-    palms: 90,
-    palmDistance: 400,
-    rocks: 60,
-    grass: 2500,
+    grassDistance: 130,
     particles: 1500,
   },
 };

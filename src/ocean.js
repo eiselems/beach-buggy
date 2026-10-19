@@ -1,7 +1,7 @@
 // The ocean: rolling Gerstner waves, sky reflections, sun glitter,
 // see-through shallow water and foam where waves break on the beach.
 import * as THREE from 'three';
-import { TERRAIN } from './terrain.js';
+import { SHORE_WAVES, HEAD_WAVES, HEAD_RANGE } from './heightfield.js';
 import { createWaterNormalTexture, createFoamTexture } from './textures.js';
 
 // Each wave: direction (x, z), wavelength in meters, height in meters
@@ -22,17 +22,30 @@ const vertexShader = /* glsl */ `
   #include <common>
   #include <fog_pars_vertex>
   uniform float uTime;
-  uniform sampler2D uHeight;
-  uniform float uTerrainSize;
-  uniform float uHeightRes;
   uniform vec4 uWaves[${WAVES.length}];   // dir.xy, k, amplitude
   varying vec3 vWorldPos;
   varying vec3 vNormal;
   varying float vCrest;
 
+  // Ground height under the water, from the same formulas as heightfield.js (without the small noise)
+  float shoreZ(float x) {
+    return ${SHORE_WAVES.map(([a, f, p]) => `${a.toFixed(4)} * sin(x * ${f.toFixed(6)} + ${p.toFixed(4)})`).join(' + ')};
+  }
+  float headland(float x) {
+    float s = ${HEAD_WAVES.map(([a, f, p]) => `${a.toFixed(4)} * sin(x * ${f.toFixed(6)} + ${p.toFixed(4)})`).join(' + ')};
+    return smoothstep(${HEAD_RANGE[0].toFixed(3)}, ${HEAD_RANGE[1].toFixed(3)}, s);
+  }
   float terrainH(vec2 xz) {
-    vec2 uv = ((xz + uTerrainSize * 0.5) / uTerrainSize * (uHeightRes - 1.0) + 0.5) / uHeightRes;
-    return texture2D(uHeight, uv).r;
+    float d = xz.y - shoreZ(xz.x);
+    float h;
+    if (d > 0.0) {
+      h = -0.034 * d - 0.00011 * d * d + 0.55 * exp(-pow((d - 48.0) / 13.0, 2.0));
+      h = max(h, -45.0);
+    } else {
+      h = 2.6 * (1.0 - exp(d / 70.0)) - 0.01 * d;
+    }
+    float head = headland(xz.x) * (1.0 - smoothstep(60.0, 300.0, d));
+    return mix(h, max(h, 22.0), head);
   }
 
   void main() {
@@ -78,12 +91,9 @@ const fragmentShader = /* glsl */ `
   #include <common>
   #include <fog_pars_fragment>
   uniform float uTime;
-  uniform sampler2D uHeight;
   uniform sampler2D uNormalTex;
   uniform sampler2D uFoamTex;
   uniform samplerCube uEnv;
-  uniform float uTerrainSize;
-  uniform float uHeightRes;
   uniform vec3 uSunDir;
   uniform vec3 uSunColor;
   uniform vec3 uDeep;
@@ -93,9 +103,25 @@ const fragmentShader = /* glsl */ `
   varying vec3 vNormal;
   varying float vCrest;
 
+  // Ground height under the water, from the same formulas as heightfield.js (without the small noise)
+  float shoreZ(float x) {
+    return ${SHORE_WAVES.map(([a, f, p]) => `${a.toFixed(4)} * sin(x * ${f.toFixed(6)} + ${p.toFixed(4)})`).join(' + ')};
+  }
+  float headland(float x) {
+    float s = ${HEAD_WAVES.map(([a, f, p]) => `${a.toFixed(4)} * sin(x * ${f.toFixed(6)} + ${p.toFixed(4)})`).join(' + ')};
+    return smoothstep(${HEAD_RANGE[0].toFixed(3)}, ${HEAD_RANGE[1].toFixed(3)}, s);
+  }
   float terrainH(vec2 xz) {
-    vec2 uv = ((xz + uTerrainSize * 0.5) / uTerrainSize * (uHeightRes - 1.0) + 0.5) / uHeightRes;
-    return texture2D(uHeight, uv).r;
+    float d = xz.y - shoreZ(xz.x);
+    float h;
+    if (d > 0.0) {
+      h = -0.034 * d - 0.00011 * d * d + 0.55 * exp(-pow((d - 48.0) / 13.0, 2.0));
+      h = max(h, -45.0);
+    } else {
+      h = 2.6 * (1.0 - exp(d / 70.0)) - 0.01 * d;
+    }
+    float head = headland(xz.x) * (1.0 - smoothstep(60.0, 300.0, d));
+    return mix(h, max(h, 22.0), head);
   }
 
   void main() {
@@ -198,17 +224,14 @@ function createOceanGeometry(segments = 420, inner = 1100, outer = 5000) {
   return geo;
 }
 
-export function createOcean({ heightTexture, heightRes, envMap, sunDir, sunColor, normalTexture, segments = 420 }) {
+export function createOcean({ envMap, sunDir, sunColor, normalTexture, segments = 420 }) {
   const uniforms = THREE.UniformsUtils.merge([
     THREE.UniformsLib.fog,
     {
       uTime: { value: 0 },
-      uHeight: { value: null },
       uNormalTex: { value: null },
       uFoamTex: { value: null },
       uEnv: { value: null },
-      uTerrainSize: { value: TERRAIN.size },
-      uHeightRes: { value: heightRes },
       uSunDir: { value: new THREE.Vector3() },
       uSunColor: { value: new THREE.Color() },
       uDeep: { value: new THREE.Color(0.004, 0.035, 0.06) },
@@ -218,7 +241,6 @@ export function createOcean({ heightTexture, heightRes, envMap, sunDir, sunColor
     },
   ]);
   // textures must not be cloned by UniformsUtils.merge, so assign afterwards
-  uniforms.uHeight.value = heightTexture;
   uniforms.uNormalTex.value = normalTexture || createWaterNormalTexture();
   uniforms.uFoamTex.value = createFoamTexture();
   uniforms.uEnv.value = envMap;
@@ -237,11 +259,14 @@ export function createOcean({ heightTexture, heightRes, envMap, sunDir, sunColor
     fog: true,
   });
   const mesh = new THREE.Mesh(createOceanGeometry(segments), material);
-  mesh.position.set(0, 0, 300);
   mesh.renderOrder = 1;
   mesh.frustumCulled = false;
-  mesh.update = (t) => {
+  // the water follows the camera, moving in whole grid squares so the waves don't wobble
+  const cell = (2 * 1100) / segments;
+  mesh.update = (t, cameraPosition) => {
     uniforms.uTime.value = t;
+    mesh.position.x = Math.round(cameraPosition.x / cell) * cell;
+    mesh.position.z = Math.round(cameraPosition.z / cell) * cell;
   };
   return mesh;
 }

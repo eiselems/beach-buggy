@@ -11,7 +11,7 @@ export class Input {
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
     this.padButtons = [];
-    this.touch = { steer: 0, throttle: 0, brake: 0, handbrake: false };
+    this.touch = { steer: 0, throttle: 0, brake: 0, handbrake: false, boost: 0 };
     if (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window) this.createTouchControls();
   }
 
@@ -23,6 +23,7 @@ export class Input {
       <div id="t-steer"><div id="t-knob"></div></div>
       <div id="t-pedals">
         <button id="t-brake">BRAKE</button>
+        <button id="t-boost">BOOST</button>
         <button id="t-gas">GAS</button>
       </div>
       <div id="t-small">
@@ -66,6 +67,7 @@ export class Input {
     hold('#t-gas', 'throttle');
     hold('#t-brake', 'brake');
     hold('#t-hand', 'handbrake');
+    hold('#t-boost', 'boost');
     root.querySelector('#t-cam').addEventListener('pointerdown', () => this.pressed.add('KeyC'));
     root.querySelector('#t-reset').addEventListener('pointerdown', () => this.pressed.add('KeyR'));
   }
@@ -78,12 +80,14 @@ export class Input {
     let steer = (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) - (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0);
     let handbrake = k.has('Space');
     let horn = k.has('KeyH');
+    let boost = k.has('ShiftLeft') || k.has('ShiftRight') ? 1 : 0;
     // touch controls
     const t = this.touch;
     throttle = Math.max(throttle, t.throttle);
     brake = Math.max(brake, t.brake);
     if (Math.abs(t.steer) > Math.abs(steer)) steer = t.steer;
     handbrake = handbrake || t.handbrake;
+    boost = Math.max(boost, t.boost);
     const actions = {
       reset: this.pressed.has('KeyR'),
       camera: this.pressed.has('KeyC'),
@@ -91,7 +95,7 @@ export class Input {
     };
 
     // Gamepad: right trigger = gas, left trigger = brake/reverse, left stick = steer,
-    // A/B = handbrake, Y = reset, RB = camera, X = horn
+    // B = boost (like Rocket League), A/X = handbrake, Y = reset, RB = camera, LB = horn
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     for (const pad of pads) {
       if (!pad) continue;
@@ -100,8 +104,9 @@ export class Input {
       steer = Math.abs(stick) > Math.abs(steer) ? -Math.sign(stick) * Math.pow(Math.abs(stick), 1.4) : steer;
       throttle = Math.max(throttle, b(7));
       brake = Math.max(brake, b(6));
-      handbrake = handbrake || b(0) > 0.5 || b(1) > 0.5;
-      horn = horn || b(2) > 0.5;
+      handbrake = handbrake || b(0) > 0.5 || b(2) > 0.5;
+      boost = Math.max(boost, b(1) > 0.5 ? 1 : 0);
+      horn = horn || b(4) > 0.5;
       const was = this.padButtons;
       const now = pad.buttons.map((x) => x.pressed);
       if (now[3] && !was[3]) actions.reset = true;
@@ -110,6 +115,6 @@ export class Input {
       break;
     }
     this.pressed.clear();
-    return { throttle, brake, steer, handbrake, horn, ...actions };
+    return { throttle, brake, steer, handbrake, horn, boost, ...actions };
   }
 }

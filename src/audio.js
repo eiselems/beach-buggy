@@ -153,6 +153,43 @@ export class GameAudio {
       o.start();
     }
     this.hornGain.connect(this.master);
+
+    // --- boost: a roaring jet of noise
+    const jet = loopNoise(ctx, noiseBuffer(ctx, 3));
+    this.boostFilter = ctx.createBiquadFilter();
+    this.boostFilter.type = 'bandpass';
+    this.boostFilter.frequency.value = 500;
+    this.boostFilter.Q.value = 0.7;
+    this.boostGain = ctx.createGain();
+    this.boostGain.gain.value = 0;
+    jet.connect(this.boostFilter);
+    this.boostFilter.connect(this.boostGain);
+    const jetLow = loopNoise(ctx, noiseBuffer(ctx, 3, true));
+    const jetLowGain = ctx.createGain();
+    jetLowGain.gain.value = 1.5;
+    jetLow.connect(jetLowGain);
+    jetLowGain.connect(this.boostGain);
+    this.boostGain.connect(this.master);
+  }
+
+  // a little chime when you pick up boost
+  pickup(big) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const notes = big ? [660, 880, 1320] : [990];
+    notes.forEach((f, i) => {
+      const o = this.ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = f;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, t + i * 0.06);
+      g.gain.linearRampToValueAtTime(0.18, t + i * 0.06 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.35);
+      o.connect(g);
+      g.connect(this.master);
+      o.start(t + i * 0.06);
+      o.stop(t + i * 0.06 + 0.4);
+    });
   }
 
   toggleMute() {
@@ -162,7 +199,7 @@ export class GameAudio {
   }
 
   // speed m/s, throttle 0..1, slip amount, shoreDistance meters, water depth, horn bool
-  update(dt, { speed, throttle, slip, airborne, shoreDistance, water, horn, time }) {
+  update(dt, { speed, throttle, slip, airborne, shoreDistance, water, horn, time, boost = 0 }) {
     const s = Math.abs(speed);
     // simple automatic gearbox
     const top = GEARS[this.gear - 1];
@@ -194,5 +231,7 @@ export class GameAudio {
     this.sandGain.gain.setTargetAtTime(airborne ? 0 : Math.min(0.12, s * 0.004 + slip * 0.01), t, 0.05);
     this.splashGain.gain.setTargetAtTime(water > 0.05 ? Math.min(0.5, s * 0.04) : 0, t, 0.08);
     this.hornGain.gain.setTargetAtTime(horn ? 0.12 : 0, t, 0.02);
+    this.boostGain.gain.setTargetAtTime(boost * 0.32, t, boost > 0 ? 0.03 : 0.12);
+    this.boostFilter.frequency.setTargetAtTime(380 + s * 14, t, 0.1);
   }
 }

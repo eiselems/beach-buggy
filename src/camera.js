@@ -38,7 +38,8 @@ export class CameraRig {
     return CAMERA_MODES[this.mode];
   }
 
-  update(dt, target, quaternion, velocity, speed) {
+  update(dt, target, quaternion, velocity, speed, boost = 0) {
+    this.boost = (this.boost || 0) + (boost - (this.boost || 0)) * Math.min(1, dt * 5);
     const cam = this.camera;
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion);
     // heading follows the direction of travel, so reversing does not spin the camera
@@ -71,7 +72,7 @@ export class CameraRig {
         target.z + Math.cos(a) * dist * Math.cos(pitch)
       );
       lookAt.set(target.x + Math.sin(this.yaw) * 2, target.y + (far ? 1.0 : 1.1), target.z + Math.cos(this.yaw) * 2);
-      fov = 60 + Math.min(speed, 35) * 0.45;
+      fov = 60 + Math.min(speed, 46) * 0.4 + this.boost * 10;
     } else if (this.mode === 2) {
       // helmet cam, slightly behind the driver's eyes
       const eye = new THREE.Vector3(0.3, 0.7, -0.3).applyQuaternion(quaternion).add(target);
@@ -117,6 +118,12 @@ export class CameraRig {
     }
     cam.position.copy(this.pos);
     cam.lookAt(this.look);
+    // a little rumble while boosting
+    if (this.boost > 0.05 && this.mode < 2) {
+      const a = this.boost * 0.004;
+      cam.rotation.x += (Math.random() - 0.5) * a;
+      cam.rotation.y += (Math.random() - 0.5) * a;
+    }
     if (Math.abs(cam.fov - fov) > 0.05) {
       cam.fov += (fov - cam.fov) * Math.min(1, dt * (this.mode === 3 ? 2 : 4));
       cam.updateProjectionMatrix();

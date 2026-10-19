@@ -171,6 +171,7 @@ kbd {
 #t-pedals { position: absolute; right: 20px; bottom: 24px; display: flex; gap: 12px; align-items: flex-end; }
 #t-gas { width: 92px; height: 120px; border-radius: 22px; }
 #t-brake { width: 80px; height: 80px; border-radius: 20px; }
+#t-boost { width: 80px; height: 80px; border-radius: 50%; border-color: #ff9a3c !important; }
 #t-small { position: absolute; right: 20px; bottom: 160px; display: flex; gap: 8px; }
 #t-small button { padding: 10px 12px; border-radius: 12px; font-size: 12px; }
 /* make room: move the speedometer up when touch controls are shown */
@@ -178,3 +179,36 @@ body:has(#touch) #gauge { bottom: auto; top: 16px; right: 16px; transform: scale
 .credits { position: absolute; bottom: 12px; left: 16px; right: 16px; font-size: 12px; opacity: 0.7; margin: 0; }
 .credits a { color: inherit; }
 #fps { position: absolute; left: 12px; top: 10px; font: 600 12px ui-monospace, monospace; opacity: 0.75; text-shadow: 0 1px 2px #000; }
+
+/* ---- boost meter (bottom right, next to the speedometer) ---- */
+#boost {
+  position: absolute;
+  right: 220px;
+  bottom: 30px;
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, rgba(20, 28, 36, 0.75), rgba(5, 8, 12, 0.85));
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+#boost-ring {
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: conic-gradient(#ff8a1e calc(var(--b, 0.33) * 360deg), rgba(255, 255, 255, 0.12) 0);
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 61%);
+  mask: radial-gradient(circle, transparent 60%, #000 61%);
+  transition: filter 0.2s;
+}
+#boost.on #boost-ring { filter: drop-shadow(0 0 8px #ffb347) brightness(1.3); }
+#boost-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 38px; font-weight: 900; font-variant-numeric: tabular-nums; }
+#boost-label { position: absolute; bottom: 18px; width: 100%; text-align: center; font-size: 10px; letter-spacing: 2px; opacity: 0.7; }
+#boost.flash { animation: boostflash 0.35s; }
+@keyframes boostflash { 0% { transform: scale(1.15); } 100% { transform: scale(1); } }
+@media (max-width: 560px) {
+  #boost { transform: scale(0.7); transform-origin: right bottom; right: 150px; bottom: 16px; }
+}
+body:has(#touch) #boost { bottom: auto; top: 16px; right: 130px; transform: scale(0.55); transform-origin: right top; }
+#speedlines { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.25s;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(255, 170, 80, 0.12) 80%, rgba(255, 140, 40, 0.25) 100%); }
+#speedlines.on { opacity: 1; }

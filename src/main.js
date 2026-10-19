@@ -22,14 +22,15 @@ const SanitizeShader = {
     }`,
 };
 
-import { createTerrainMesh, createPhysicsMeshData, createHeightTexture, shoreZ } from './terrain.js';
+import { WorkerPool, TerrainLOD, PhysicsTerrain, createSandMaterial, getHeight, shoreZ } from './terrain.js';
 import { createEnvironment } from './environment.js';
 import { loadAssets } from './assets.js';
 import { QUALITY } from './quality.js';
 import { createOcean } from './ocean.js';
 import { loadBuggy, BUGGY_CREDIT } from './buggy.js';
 import { Vehicle } from './vehicle.js';
-import { createProps } from './props.js';
+import { PropSystem, SPAWN } from './props.js';
+import { BoostSystem, ExhaustFlames } from './boost.js';
 import { TireTracks, Particles, emitWheelEffects } from './effects.js';
 import { GameAudio } from './audio.js';
 import { Input } from './input.js';
@@ -68,29 +69,39 @@ async function main() {
 
   const env = await step('Painting the sky…', () => createEnvironment(renderer, scene, assets.hdr, QUALITY));
 
-  const terrain = await step('Shaping the beach…', () => createTerrainMesh(assets.sand, QUALITY));
-  scene.add(terrain);
-
-  const HEIGHT_RES = 1024;
   const ocean = await step('Filling the ocean…', () =>
-    createOcean({ heightTexture: createHeightTexture(HEIGHT_RES), heightRes: HEIGHT_RES, envMap: env.envCube, sunDir: env.sunDir, sunColor: env.sunColor, normalTexture: assets.waterNormals, segments: QUALITY.oceanSegments })
+    createOcean({ envMap: env.envCube, sunDir: env.sunDir, sunColor: env.sunColor, normalTexture: assets.waterNormals, segments: QUALITY.oceanSegments })
   );
   scene.add(ocean);
 
-  // --- physics world
+  // --- the endless world: built around the player by background workers
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = 1 / 120;
-  await step('Packing the sand…', () => {
-    const { vertices, indices } = createPhysicsMeshData();
-    world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices).setFriction(0.8));
-  });
+  const pool = new WorkerPool(Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)));
+  const terrain = new TerrainLOD(scene, createSandMaterial(assets.sand, QUALITY.sandDetail), pool, QUALITY);
+  const physTerrain = new PhysicsTerrain(world, pool);
+  const boost = new BoostSystem(scene, getHeight);
+  const props = new PropSystem(scene, world, pool, assets, QUALITY, boost);
 
-  const props = await step('Planting palm trees…', () => createProps(scene, world, assets, QUALITY));
+  const spawnPoint = new THREE.Vector3(SPAWN.x, getHeight(SPAWN.x, SPAWN.z) + 2, SPAWN.z);
+  camera.position.copy(spawnPoint).add(new THREE.Vector3(0, 3, -8));
+  // build the world around the start before the player sees it
+  for (let i = 0; ; i++) {
+    terrain.update(spawnPoint, true);
+    physTerrain.update([spawnPoint]);
+    props.update(0, camera, spawnPoint);
+    const done = terrain.progress() >= 1 && physTerrain.readyAt([spawnPoint]) && pool.busy === 0;
+    $('loading-text').textContent = `Building the island… ${Math.round(terrain.progress() * 100)}%`;
+    if (done && i > 20) break;
+    await new Promise((r) => setTimeout(r, 30));
+  }
 
   const buggy = await step('Fueling up the buggy…', () => loadBuggy());
   scene.add(buggy.root);
-  const start = { x: props.spawn.x, z: props.spawn.z, yaw: Math.PI / 2 };
+  const start = { x: SPAWN.x, z: SPAWN.z, yaw: Math.PI / 2 };
   const vehicle = new Vehicle(world, start.x, start.z, start.yaw, buggy);
+  // twin exhaust pipes at the back (positions measured on the model)
+  const flames = new ExhaustFlames(buggy.root, [new THREE.Vector3(-0.08, 0.35, -1.85), new THREE.Vector3(-0.24, 0.35, -1.85)]);
 
   const tracks = new TireTracks(scene);
   const particles = new Particles(scene, QUALITY.particles);
@@ -150,7 +161,7 @@ async function main() {
   await step('Warming up…', () => renderer.compile(scene, camera));
 
   // --- HUD
-  const hud = { speed: $('speed'), gear: $('gear'), toast: $('toast'), needle: $('needle') };
+  const hud = { speed: $('speed'), gear: $('gear'), toast: $('toast'), needle: $('needle'), boost: $('boost'), boostNum: $('boost-num'), speedlines: $('speedlines') };
   let toastTimer = 0;
   function toast(text) {
     hud.toast.textContent = text;
@@ -181,6 +192,9 @@ async function main() {
   let acc = 0;
   let time = 0;
   let upsideDownTime = 0;
+  let deepTime = 0;
+  let boostPower = 0;
+  const ahead = new THREE.Vector3();
   const prevPos = new THREE.Vector3(), curPos = new THREE.Vector3();
   const prevRot = new THREE.Quaternion(), curRot = new THREE.Quaternion();
   const right = new THREE.Vector3(), forward = new THREE.Vector3();
@@ -195,7 +209,7 @@ async function main() {
 
   // let the buggy settle on its suspension before the player sees it
   for (let i = 0; i < 120; i++) {
-    vehicle.step(DT, { throttle: 0, brake: 0, steer: 0, handbrake: false });
+    vehicle.step(DT, { throttle: 0, brake: 0, steer: 0, handbrake: false, boost: 0 });
     world.step();
   }
   copyBody(curPos, curRot);
@@ -206,7 +220,23 @@ async function main() {
     timer.update();
     const dt = Math.min(timer.getDelta(), 0.1);
     time += dt;
-    const controls = running ? input.read() : { throttle: 0, brake: 0, steer: 0, handbrake: false };
+    const controls = running ? input.read() : { throttle: 0, brake: 0, steer: 0, handbrake: false, boost: 0 };
+
+    // keep solid ground under the buggy and where it is heading
+    const bp = vehicle.body.translation(), bv = vehicle.body.linvel();
+    ahead.set(bp.x + bv.x * 2.5, bp.y, bp.z + bv.z * 2.5);
+    physTerrain.update([bp, ahead]);
+
+    boostPower = boost.update(dt, controls.boost > 0.5, bp);
+    controls.boost = boostPower;
+    while (boost.pickups.length) {
+      const big = boost.pickups.pop();
+      audio.pickup(big);
+      hud.boost.classList.remove('flash');
+      void hud.boost.offsetWidth;
+      hud.boost.classList.add('flash');
+      if (big) toast('Full boost!');
+    }
 
     if (controls.reset) {
       vehicle.reset();
@@ -240,6 +270,23 @@ async function main() {
     emitWheelEffects(particles, vehicle, forward, dt, time);
     particles.update(dt);
 
+    flames.update(dt, boostPower > 0, time);
+    if (boostPower > 0 && Math.random() < dt * 60) {
+      // smoke puffs out of the pipes
+      const p = flames.flames[0].getWorldPosition(ahead);
+      particles.emit(p.x, p.y, p.z, -forward.x * 4 + (Math.random() - 0.5), 0.6, -forward.z * 4 + (Math.random() - 0.5),
+        { size: 0.25, grow: 1.4, life: 0.9, alpha: 0.18, color: [0.55, 0.5, 0.48], gravity: -0.05, drag: 2 });
+    }
+
+    // too deep in the sea: put the buggy back on the beach
+    deepTime = vehicle.state.inWater > 1.6 ? deepTime + dt : 0;
+    if (deepTime > 1.2) {
+      const x = bp.x;
+      vehicle.place(x, shoreZ(x) - 22, Math.atan2(bv.x, bv.z) > 0 ? Math.PI / 2 : -Math.PI / 2);
+      toast('Too deep! Back to the beach');
+      deepTime = 0;
+    }
+
     // flipped over? offer a reset
     upsideDownTime = vehicle.state.upsideDown && Math.abs(vehicle.speed) < 2 ? upsideDownTime + dt : 0;
     if (upsideDownTime > 2) {
@@ -248,10 +295,11 @@ async function main() {
     }
 
     const lv = vehicle.body.linvel();
-    rig.update(dt, buggy.root.position, buggy.root.quaternion, lv, Math.abs(vehicle.speed));
+    rig.update(dt, buggy.root.position, buggy.root.quaternion, lv, Math.abs(vehicle.speed), boostPower);
     env.update(buggy.root.position);
-    ocean.update(time);
-    props.update(time, camera.position);
+    ocean.update(time, camera.position);
+    terrain.update(camera.position);
+    props.update(time, camera, buggy.root.position);
 
     const slip = vehicle.state.slip.reduce((a, b) => a + b, 0) / 4;
     audio.update(dt, {
@@ -263,12 +311,17 @@ async function main() {
       water: vehicle.state.inWater,
       horn: controls.horn,
       time,
+      boost: boostPower,
     });
 
     // HUD
     const kmh = Math.abs(vehicle.speed) * 3.6;
     hud.speed.textContent = Math.round(kmh);
     hud.gear.textContent = vehicle.speed < -0.5 ? 'R' : audio.gear;
+    hud.boostNum.textContent = Math.floor(boost.amount);
+    hud.boost.style.setProperty('--b', (boost.amount / 100).toFixed(3));
+    hud.boost.classList.toggle('on', boostPower > 0);
+    hud.speedlines.classList.toggle('on', boostPower > 0 && kmh > 60);
     hud.needle.style.transform = `rotate(${-120 + Math.min(audio.rpm / 7000, 1) * 240}deg)`;
     if (toastTimer > 0) {
       toastTimer -= dt;
@@ -283,7 +336,7 @@ async function main() {
   requestAnimationFrame(frame);
 
   // handy for experimenting in the browser console
-  window.game = { scene, camera, renderer, composer, bloom, vehicle, buggy, rig, world, tracks, RAPIER, QUALITY, getPixelRatio: () => pixelRatio };
+  window.game = { scene, camera, renderer, composer, bloom, vehicle, buggy, rig, world, tracks, RAPIER, QUALITY, terrain, physTerrain, props, boost, pool, input, getPixelRatio: () => pixelRatio };
 }
 
 main().catch((err) => {
