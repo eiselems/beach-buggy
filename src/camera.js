@@ -66,8 +66,11 @@ export class CameraRig {
 
     if (this.mode === 0 || this.mode === 1) {
       const far = this.mode === 1;
-      const dist = (far ? 10.5 : 6.2) + Math.min(speed, 30) * 0.04;
-      const height = far ? 3.8 : 2.0;
+      // big air: pull back and up so you can see the landing
+      this.airCam = (this.airCam || 0) + ((airborne && (this.airFor = (this.airFor || 0) + dt) > 0.35 ? 1 : 0) - (this.airCam || 0)) * Math.min(1, dt * 2.5);
+      if (!airborne) this.airFor = 0;
+      const dist = (far ? 10.5 : 6.2) + Math.min(speed, 30) * 0.04 + this.airCam * 3;
+      const height = (far ? 3.8 : 2.0) + this.airCam * 1.6;
       const a = this.yaw + Math.PI + this.orbit.yaw;
       const pitch = this.orbit.pitch;
       desired.set(
@@ -76,7 +79,7 @@ export class CameraRig {
         target.z + Math.cos(a) * dist * Math.cos(pitch)
       );
       lookAt.set(target.x + Math.sin(this.yaw) * 2, target.y + (far ? 1.0 : 1.1), target.z + Math.cos(this.yaw) * 2);
-      fov = 60 + Math.min(speed, 46) * 0.4 + this.boost * 10;
+      fov = 60 + Math.min(speed, 46) * 0.4 + this.boost * 10 + (this.airCam || 0) * 4;
     } else if (this.mode === 2) {
       // helmet cam, slightly behind the driver's eyes
       const eye = new THREE.Vector3(0.3, 0.5, 0.15).applyQuaternion(quaternion).add(target);

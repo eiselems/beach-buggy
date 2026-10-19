@@ -1,4 +1,5 @@
-// All sounds are synthesized live with the Web Audio API: engine, waves, wind, horn.
+// Sounds: a recorded engine loop (CC0) plus layers synthesized live with the Web Audio API:
+// engine rumble, waves, wind, sand, splashes, boost, horn.
 
 function noiseBuffer(ctx, seconds, brown = false) {
   const len = ctx.sampleRate * seconds;
@@ -154,6 +155,27 @@ export class GameAudio {
     }
     this.hornGain.connect(this.master);
 
+    // --- recorded engine loop ("racing car engine sound loops" by domasx2, CC0), pitched with the revs
+    this.sampleGain = ctx.createGain();
+    this.sampleGain.gain.value = 0;
+    this.sampleFilter = ctx.createBiquadFilter();
+    this.sampleFilter.type = 'lowpass';
+    this.sampleFilter.frequency.value = 3000;
+    this.sampleFilter.connect(this.sampleGain);
+    this.sampleGain.connect(this.master);
+    fetch('assets/audio/engine.wav')
+      .then((r) => r.arrayBuffer())
+      .then((b) => ctx.decodeAudioData(b))
+      .then((buffer) => {
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.loop = true;
+        src.connect(this.sampleFilter);
+        src.start();
+        this.sample = src;
+      })
+      .catch(() => {}); // the synthesized engine still plays
+
     // --- boost: a roaring jet of noise
     const jet = loopNoise(ctx, noiseBuffer(ctx, 3));
     this.boostFilter = ctx.createBiquadFilter();
@@ -252,7 +274,15 @@ export class GameAudio {
     const firing = (this.rpm / 60) * 2; // 4-cylinder: two firings per revolution
     for (const o of this.oscs) o.osc.frequency.setTargetAtTime(firing * o.mult, t, 0.02);
     this.engineFilter.frequency.setTargetAtTime(300 + throttle * 1400 + this.rpm * 0.25, t, 0.05);
-    this.engineGain.gain.setTargetAtTime(0.12 + throttle * 0.16 + (this.rpm / REDLINE) * 0.08, t, 0.05);
+    // with the recorded engine playing, the synthesized one is only a low rumble underneath
+    const synth = this.sample ? 0.35 : 1;
+    this.engineGain.gain.setTargetAtTime((0.12 + throttle * 0.16 + (this.rpm / REDLINE) * 0.08) * synth, t, 0.05);
+    if (this.sample) {
+      this.sample.playbackRate.setTargetAtTime(0.45 + (this.rpm / REDLINE) * 1.45, t, 0.03);
+      this.sampleGain.gain.setTargetAtTime(0.2 + throttle * 0.25, t, 0.05);
+      // off the throttle the engine sounds muffled
+      this.sampleFilter.frequency.setTargetAtTime(900 + throttle * 4500, t, 0.08);
+    }
     this.rumbleFilter.frequency.setTargetAtTime(firing * 2, t, 0.05);
     this.rumbleGain.gain.setTargetAtTime(0.4 + throttle * 0.6, t, 0.05);
 

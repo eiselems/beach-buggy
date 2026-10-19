@@ -72,7 +72,7 @@ The page reloads by itself when you save a file.
 - `src/assets.js`: loads the sand, rock and sky files from `public/assets`.
 - `src/boost.js`: boost meter, pads and exhaust flames. `src/skills.js`: the skill chain.
 - `src/effects.js`: tire tracks (waves wash them away near the water), dust, sand roost and splashes.
-- `src/audio.js`: engine, waves, wind and horn, all synthesized with the Web Audio API.
+- `src/audio.js`: a recorded engine loop pitched with the revs, plus waves, wind, sand, boost and horn synthesized with the Web Audio API.
 
 ## Credits
 
@@ -81,5 +81,6 @@ The page reloads by itself when you save a file.
 - Palm trees: ["Coconut Palm"](https://sketchfab.com/3d-models/coconut-palm-26e787f2ff2e4c0fb004c3b0210805a3) by evolveduk, CC-BY 4.0
 - Dune grass: ["Dry grass"](https://sketchfab.com/3d-models/dry-grass-d1484537470441b999d37077aeb9b47a) by Pixel-bit, CC-BY 4.0
 - Sand, rock and grass textures, rock models and the beach HDR sky: [Poly Haven](https://polyhaven.com), CC0
+- Engine sound: ["racing car engine sound loops"](https://opengameart.org/content/racing-car-engine-sound-loops) by domasx2, CC0
 - Ambient occlusion: [N8AO](https://github.com/N8python/n8ao) (MIT)
 - Water normal map: from the [three.js](https://github.com/mrdoob/three.js) examples (MIT)

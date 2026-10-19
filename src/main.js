@@ -234,7 +234,7 @@ async function main() {
     toastTimer = 2.2;
   }
 
-  $('credits').innerHTML = `Buggy: <a href="${BUGGY_CREDIT.url}" target="_blank">${BUGGY_CREDIT.title}</a> by ${BUGGY_CREDIT.author} (${BUGGY_CREDIT.license}) · Palms: <a href="https://sketchfab.com/3d-models/coconut-palm-26e787f2ff2e4c0fb004c3b0210805a3" target="_blank">Coconut Palm</a> by evolveduk · Grass: <a href="https://sketchfab.com/3d-models/dry-grass-d1484537470441b999d37077aeb9b47a" target="_blank">Dry grass</a> by Pixel-bit (CC-BY 4.0) · Sand, rocks &amp; sky: <a href="https://polyhaven.com" target="_blank">Poly Haven</a> (CC0)`;
+  $('credits').innerHTML = `Buggy: <a href="${BUGGY_CREDIT.url}" target="_blank">${BUGGY_CREDIT.title}</a> by ${BUGGY_CREDIT.author} (${BUGGY_CREDIT.license}) · Palms: <a href="https://sketchfab.com/3d-models/coconut-palm-26e787f2ff2e4c0fb004c3b0210805a3" target="_blank">Coconut Palm</a> by evolveduk · Grass: <a href="https://sketchfab.com/3d-models/dry-grass-d1484537470441b999d37077aeb9b47a" target="_blank">Dry grass</a> by Pixel-bit (CC-BY 4.0) · Sand, rocks &amp; sky: <a href="https://polyhaven.com" target="_blank">Poly Haven</a> (CC0) · Engine sound: <a href="https://opengameart.org/content/racing-car-engine-sound-loops" target="_blank">domasx2</a> (CC0)`;
   $('loading').classList.add('hidden');
   $('start').classList.remove('hidden');
   let running = false;
@@ -480,7 +480,7 @@ async function main() {
   requestAnimationFrame(frame);
 
   // handy for experimenting in the browser console
-  window.game = { scene, camera, renderer, composer, bloom, vehicle, buggy, rig, world, tracks, RAPIER, QUALITY, terrain, physTerrain, props, boost, pool, input, getPixelRatio: () => pixelRatio };
+  window.game = { scene, camera, renderer, composer, bloom, vehicle, buggy, rig, world, tracks, RAPIER, QUALITY, terrain, physTerrain, props, boost, pool, input, audio, getPixelRatio: () => pixelRatio };
 }
 
 main().catch((err) => {
