@@ -181,6 +181,11 @@ export class ExhaustFlames {
     this.power = 0;
   }
 
+  // a short flash of flame (backfire)
+  flash() {
+    this.power = Math.max(this.power, 0.55);
+  }
+
   update(dt, boosting, time) {
     this.power += ((boosting ? 1 : 0) - this.power) * Math.min(1, dt * (boosting ? 18 : 10));
     this.uniforms.uTime.value = time;

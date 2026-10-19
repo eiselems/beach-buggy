@@ -203,7 +203,7 @@ async function main() {
   const hud = { speed: $('speed'), gear: $('gear'), toast: $('toast'), needle: $('needle'), boost: $('boost'), boostNum: $('boost-num'), speedlines: $('speedlines') };
   let toastTimer = 0;
   const skills = new Skills({ chain: $('chain'), chainScore: $('chain-score'), chainMult: $('chain-mult'), chainBar: $('chain-bar'), feed: $('feed'), total: $('total') });
-  let lastKmh = 0, wasAirborne = false, fallSpeed = 0;
+  let lastKmh = 0, wasAirborne = false, fallSpeed = 0, lastThrottle = 0, popsLeft = 0;
   function toast(text) {
     hud.toast.textContent = text;
     hud.toast.classList.add('show');
@@ -311,6 +311,14 @@ async function main() {
     emitWheelEffects(particles, vehicle, forward, dt, time);
     particles.update(dt);
 
+    // backfire pops when you lift off the throttle at high revs
+    if (lastThrottle > 0.5 && controls.throttle < 0.1 && audio.rpm > 4200) popsLeft = 2 + Math.floor(Math.random() * 4);
+    lastThrottle = controls.throttle;
+    if (popsLeft > 0 && Math.random() < dt * 9) {
+      popsLeft--;
+      audio.pop();
+      flames.flash();
+    }
     flames.update(dt, boostPower > 0, time);
     if (boostPower > 0 && Math.random() < dt * 60) {
       // smoke puffs out of the pipes

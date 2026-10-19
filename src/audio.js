@@ -172,6 +172,24 @@ export class GameAudio {
     this.boostGain.connect(this.master);
   }
 
+  // an exhaust backfire "pop"
+  pop() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.popBuffer ||= noiseBuffer(this.ctx, 0.12);
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 900 + Math.random() * 900;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.master);
+    src.start(t);
+  }
+
   // a thud when the buggy lands from a jump
   thump(strength) {
     if (!this.ctx) return;
