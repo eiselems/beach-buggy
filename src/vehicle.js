@@ -151,18 +151,24 @@ export class Vehicle {
     const lateral = lv.x * left.x + lv.y * left.y + lv.z * left.z;
     const flatSpeed = Math.hypot(lateral, speed);
     const slipAngle = flatSpeed > 4 && speed > -1 ? Math.atan2(lateral, Math.max(speed, 0.1)) : 0;
+    this.prevSlip = this.slipAngle;
     this.slipAngle = slipAngle;
     // holding a drift = throttle on and steering against the slide (countersteer has the same sign as the slip)
-    const driftHeld = input.throttle > 0.3 && input.steer * slipAngle > 0.02 && Math.abs(slipAngle) > 0.15;
+    // holding a drift = throttle on and some steering (either way) while already sliding;
+    // let go of the steering or the throttle and the buggy straightens out
+    const driftHeld = input.throttle > 0.3 && Math.abs(input.steer) > 0.1 && Math.abs(slipAngle) > 0.15;
+    // in a drift, a full keyboard countersteer is far too much: treat it as a gentle one
+    const counter = input.steer * slipAngle > 0;
+    const steerIn = driftHeld && counter ? input.steer * 0.35 : input.steer;
 
     // --- steering (less at high speed so it stays controllable), plus automatic countersteer:
     // the front wheels lean towards where the buggy is actually going, like Forza's steering assist
     // less lock at high speed, so full lock on a keyboard carves instead of spinning
     const steerLimit = T.maxSteer / (1 + (speed * speed) / 900 + Math.max(0, speed - 26) * 0.05);
-    let target = input.steer * steerLimit;
+    let target = steerIn * steerLimit;
     // only help when the player isn't steering into the turn themselves
-    const steeringIntoSlide = input.steer * slipAngle < 0;
-    if (speed > 4) target += T.countersteer * slipAngle * (steeringIntoSlide ? 1 - 0.8 * Math.abs(input.steer) : 1);
+    const steeringIntoSlide = steerIn * slipAngle < 0;
+    if (speed > 4) target += T.countersteer * slipAngle * (driftHeld ? 0.4 : steeringIntoSlide ? 1 - 0.8 * Math.abs(steerIn) : 1);
     target = Math.max(-T.maxSteer, Math.min(T.maxSteer, target));
     const rate = Math.abs(target) < Math.abs(this.steer) ? T.steerReturn : T.steerSpeed;
     this.steer += (target - this.steer) * Math.min(1, dt * rate);
@@ -269,7 +275,7 @@ export class Vehicle {
       const asked = Math.abs(input.steer) > 0.1 || input.handbrake || Math.abs(slipAngle) > 0.2;
       // when a slide is snapping back (rotating towards straight), damp hard so it doesn't swing
       // through to the other side like a pendulum
-      const snapping = Math.abs(slipAngle) > 0.05 && yawRate * slipAngle > 0;
+      const snapping = !driftHeld && Math.abs(slipAngle) > 0.05 && yawRate * slipAngle > 0;
       const k = (snapping ? 4 : asked ? 0.25 : 1) * T.yawDamping * Math.min(1, Math.abs(speed) / 8);
       const inertia = 600;
       const imp = -yawRate * inertia * k * dt;
@@ -282,8 +288,14 @@ export class Vehicle {
       }
       // a drift only lasts while you hold it (throttle + countersteer); otherwise the buggy
       // straightens out towards where it's going
-      if (driftHeld && Math.abs(slipAngle) < 0.45) {
-        const hold = Math.sign(slipAngle) * -0.6 * input.throttle * inertia * dt;
+      if (driftHeld) {
+        // drift controller: steer into the turn for a wider angle, countersteer for a narrower one
+        const want = 0.42 + (counter ? -0.12 : 0.1) * Math.abs(input.steer);
+        const err = want - Math.abs(slipAngle);
+        // plus damping on how fast the angle changes, so it settles instead of wobbling
+        const slipRate = (slipAngle - (this.prevSlip ?? slipAngle)) / dt;
+        const yawErr = -Math.sign(slipAngle) * err * 7 + slipRate * 1.6;
+        const hold = yawErr * input.throttle * inertia * dt;
         body.applyTorqueImpulse({ x: up.x * hold, y: up.y * hold, z: up.z * hold }, true);
       } else if (!driftHeld && !input.handbrake && Math.abs(slipAngle) > 0.03) {
         const a = Math.sign(slipAngle) * Math.min(Math.abs(slipAngle), 0.6) * 6 * inertia * dt;
@@ -301,7 +313,7 @@ export class Vehicle {
       }
       // while drifting, the throttle keeps the speed up (less scrub)
       if (Math.abs(slipAngle) > 0.2 && (input.throttle > 0.3 || input.handbrake)) {
-        const push = T.mass * 4.5 * Math.max(input.throttle, input.handbrake ? 0.6 : 0) * dt;
+        const push = T.mass * 6.5 * Math.max(input.throttle, input.handbrake ? 0.6 : 0) * dt;
         const vx = lv.x, vz = lv.z, vl = Math.hypot(vx, vz) || 1;
         body.applyImpulse({ x: (vx / vl) * push, y: 0, z: (vz / vl) * push }, true);
       }
@@ -320,7 +332,9 @@ export class Vehicle {
         if (this.state.contact[i] && cp.y - getHeight(cp.x, cp.z) > 0.3) this.onRamp = true;
       }
     }
-    if (contacts === 0 && this.airTime < 0.35 && !this.onRamp) {
+    // off a crest (not a ramp), the buggy falls a bit faster so small bumps don't turn into long flights
+    if (contacts === 0 && !this.onRamp) body.applyImpulse({ x: 0, y: -T.mass * 9.81 * 0.45 * dt, z: 0 }, true);
+    if (contacts === 0 && this.airTime < 0.5 && !this.onRamp) {
       const v = body.linvel();
       const gap = pos.y - getHeight(pos.x, pos.z);
       if (v.y > 0 && gap < 2.2) body.applyImpulse({ x: 0, y: -Math.min(v.y, 9.81 * 2.2 * dt) * T.mass, z: 0 }, true);

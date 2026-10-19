@@ -66,7 +66,15 @@ export async function loadBuggy(url = 'models/buggy.glb') {
   const root = new THREE.Group();
   root.name = 'buggy';
   model.position.y = -RIDE_HEIGHT;
-  root.add(model);
+  // the body leans in corners and pitches when braking/accelerating (on top of the physics)
+  const lean = new THREE.Group();
+  lean.add(model);
+  root.add(lean);
+  // the wheels don't lean with the body: move them to their own group (same place, no lean)
+  const wheelBase = new THREE.Group();
+  wheelBase.position.y = -RIDE_HEIGHT;
+  root.add(wheelBase);
+  for (const w of wheels) wheelBase.add(w.node);
 
   // Called every frame with the physics state of each wheel
   function update({ suspension, rotation, steering }) {
@@ -79,5 +87,14 @@ export async function loadBuggy(url = 'models/buggy.glb') {
     }
   }
 
-  return { root, wheels, bodyBox, update, setHelmetCam() {} };
+  // lateral / forward acceleration in g
+  const leanState = { roll: 0, pitch: 0 };
+  function setLean(latG, longG, dt) {
+    const k = Math.min(1, dt * 6);
+    leanState.roll += (Math.max(-1.5, Math.min(1.5, latG)) * 0.07 - leanState.roll) * k;
+    leanState.pitch += (Math.max(-1.5, Math.min(1.5, longG)) * -0.035 - leanState.pitch) * k;
+    lean.rotation.set(leanState.pitch, 0, leanState.roll);
+  }
+
+  return { root, wheels, bodyBox, update, setLean, setHelmetCam() {} };
 }

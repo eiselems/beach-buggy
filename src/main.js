@@ -225,7 +225,7 @@ async function main() {
   let toastTimer = 0;
   const minimap = new Minimap($('minimap'), props, boost);
   const skills = new Skills({ chain: $('chain'), chainScore: $('chain-score'), chainMult: $('chain-mult'), chainBar: $('chain-bar'), feed: $('feed'), total: $('total') });
-  let sinceLanding = 1, stuckTime = 0;
+  let sinceLanding = 1, stuckTime = 0, snapGrace = 0, longAcc = 0, lastSpeed = 0;
   let lastKmh = 0, wasAirborne = false, fallSpeed = 0, lastThrottle = 0, popsLeft = 0;
   function toast(text) {
     hud.toast.textContent = text;
@@ -339,6 +339,11 @@ async function main() {
     buggy.root.position.lerpVectors(prevPos, curPos, alpha);
     buggy.root.quaternion.slerpQuaternions(prevRot, curRot, alpha);
     buggy.update(vehicle.state, time, Math.abs(vehicle.speed));
+    // body roll and pitch from the accelerations
+    const yawRateNow = vehicle.body.angvel().y;
+    longAcc += ((vehicle.speed - lastSpeed) / Math.max(dt, 1e-3) - longAcc) * Math.min(1, dt * 8);
+    lastSpeed = vehicle.speed;
+    buggy.setLean(vehicle.state.airborne ? 0 : (yawRateNow * vehicle.speed) / 9.81, vehicle.state.airborne ? 0 : longAcc / 9.81, dt);
     buggy.setHelmetCam(rig.mode === 2);
 
     // effects
@@ -368,7 +373,7 @@ async function main() {
     // too deep in the sea: put the buggy back on the beach
     // remember the last good spot on the sand, to come back to
     safeTimer += dt;
-    if (safeTimer > 1 && !vehicle.state.airborne && !vehicle.state.upsideDown && vehicle.state.inWater < 0.2) {
+    if (safeTimer > 1 && vehicle.state.contact.every(Boolean) && !vehicle.state.upsideDown && vehicle.state.inWater < 0.2 && Math.abs(vehicle.speed) > 5) {
       safeTimer = 0;
       // heading along the coast (the way you were going), never towards the sea
       const along = Math.sign(bv.x || 1);
@@ -388,7 +393,8 @@ async function main() {
     const kmhNow = Math.abs(vehicle.speed) * 3.6;
     // a crash = a sudden stop while driving on the ground (not a landing, not smashing an umbrella)
     sinceLanding = vehicle.state.airborne ? 0 : sinceLanding + dt;
-    const crashed = lastKmh - kmhNow > 300 * dt && lastKmh > 40 && sinceLanding > 0.4 && controls.brake < 0.1 && !controls.handbrake;
+    snapGrace = Math.max(0, snapGrace - dt);
+    const crashed = lastKmh - kmhNow > 300 * dt && lastKmh > 40 && sinceLanding > 0.4 && snapGrace === 0 && controls.brake < 0.1 && !controls.handbrake;
     if (crashed) {
       audio.thump(Math.min(10, (lastKmh - kmhNow) / 6));
       rig.shake = 0.6;
@@ -397,8 +403,8 @@ async function main() {
     stuckTime = controls.throttle > 0.5 && kmhNow < 1.5 && !vehicle.state.airborne ? stuckTime + dt : 0;
     if (stuckTime > 2) {
       stuckTime = 0;
-      const back = forward.clone().multiplyScalar(-2.5);
-      vehicle.place(bp.x + back.x, bp.z + back.z, Math.atan2(forward.x, forward.z));
+      // back to the last spot where it was driving fine (a few metres back along the way it came)
+      vehicle.place(safeSpot.x, safeSpot.y, safeSpot.z);
       toast('Unstuck!');
     }
     lastKmh = kmhNow;
@@ -418,6 +424,14 @@ async function main() {
     grassField.update(camera.position);
     props.update(time, camera, buggy.root.position, dt, lv);
 
+    if (props.snappedNow) {
+      snapGrace = 0.4;
+      // snapping a palm costs a little speed and gives a jolt
+      const v = vehicle.body.linvel();
+      vehicle.body.setLinvel({ x: v.x * 0.85, y: v.y, z: v.z * 0.85 }, true);
+      audio.thump(6);
+      rig.shake = 0.4;
+    }
     for (const hit of props.trapHits) {
       skills.award('SPEED TRAP', hit.kmh * 6);
       toast(`📸 Speed trap: ${Math.round(hit.kmh)} km/h${hit.best ? ' — new best!' : ''}`);

@@ -424,20 +424,60 @@ export class PropSystem {
 
   addColliders(t) {
     t.colliders = [];
-    const add = (desc) => desc && t.colliders.push(this.world.createCollider(desc));
+    const add = (desc) => {
+      if (!desc) return null;
+      const c = this.world.createCollider(desc);
+      t.colliders.push(c);
+      return c;
+    };
     const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
-    for (const m of t.palmMatrices) {
+    t.palmColliders = t.palmMatrices.map((m, i) => {
+      if (t.snapped?.has(i)) return null; // already knocked down
       m.decompose(p, q, s);
-      add(RAPIER.ColliderDesc.cylinder(1.5, 0.35 * s.x).setTranslation(p.x, p.y + 1.4, p.z).setFriction(0.6));
-    }
+      return add(RAPIER.ColliderDesc.cylinder(1.5, 0.35 * s.x).setTranslation(p.x, p.y + 1.4, p.z).setFriction(0.6));
+    });
     for (const r of t.rockItems) add(rockCollider(this.assets.rocks[r.v].geometry, r.pos, r.q, r.scale));
     for (const r of t.ramps) add(r.collider());
     for (const lh of t.lighthouses) add(RAPIER.ColliderDesc.cylinder(9, 2.6).setTranslation(lh.position.x, lh.position.y + 9, lh.position.z));
   }
 
   removeColliders(t) {
-    for (const c of t.colliders) this.world.removeCollider(c, false);
+    for (const c of t.colliders) if (c) this.world.removeCollider(c, false);
     t.colliders = null;
+    t.palmColliders = null;
+  }
+
+  // a fast hit snaps the palm: it falls over the way you were going and you drive on
+  snapPalm(t, i, carVel) {
+    t.snapped ||= new Set();
+    t.snapped.add(i);
+    const c = t.palmColliders[i];
+    this.world.removeCollider(c, false);
+    t.colliders[t.colliders.indexOf(c)] = null;
+    t.palmColliders[i] = null;
+    const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+    for (const m of [...t.palmNear, ...t.palmFar]) {
+      m.setMatrixAt(i, hidden);
+      m.instanceMatrix.needsUpdate = true;
+    }
+    const tree = new THREE.Group();
+    const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    t.palmMatrices[i].decompose(p, q, s);
+    tree.position.copy(p);
+    const inner = new THREE.Group();
+    inner.quaternion.copy(q);
+    inner.scale.copy(s);
+    for (const part of this.assets.palm) {
+      const mesh = new THREE.Mesh(part.geometry, part.material);
+      mesh.castShadow = true;
+      inner.add(mesh);
+    }
+    tree.add(inner);
+    // fall around the axis across the hit direction
+    const v = new THREE.Vector3(carVel.x, 0, carVel.z).normalize();
+    tree.userData = { axis: new THREE.Vector3(v.z, 0, -v.x), angle: 0, speed: 0.6 };
+    this.scene.add(tree);
+    (t.fallen ||= []).push(tree);
   }
 
   unload(t) {
@@ -449,6 +489,7 @@ export class PropSystem {
     for (const r of t.ramps || []) this.scene.remove(r.mesh);
     for (const tr of t.traps || []) this.scene.remove(tr.mesh);
     for (const lh of t.lighthouses || []) this.scene.remove(lh);
+    for (const f of t.fallen || []) this.scene.remove(f);
     if (t.colliders) this.removeColliders(t);
     if (this.boost) this.boost.removeTile(t.key);
   }
@@ -456,6 +497,32 @@ export class PropSystem {
   update(time, camera, focus, dt = 0, carVel = null) {
     wind.value = time;
     this.smashed = carVel ? updateSmashables(dt, focus, carVel) : 0;
+    this.snappedNow = false;
+    if (carVel) {
+      const speed = Math.hypot(carVel.x, carVel.z);
+      for (const t of this.tiles.values()) {
+        // falling palms
+        for (const f of t.fallen || []) {
+          const u = f.userData;
+          if (u.angle < 1.45) {
+            u.speed += dt * 3.5;
+            u.angle = Math.min(1.45, u.angle + u.speed * dt);
+            f.quaternion.setFromAxisAngle(u.axis, u.angle);
+          }
+        }
+        if (!t.palmColliders || speed < 18) continue;
+        t.palmMatrices.forEach((m, i) => {
+          if (!t.palmColliders[i]) return;
+          const dx = m.elements[12] - focus.x, dz = m.elements[14] - focus.z;
+          // only palms right in front of the buggy
+          if (dx * dx + dz * dz < 3.2 * 3.2 && dx * carVel.x + dz * carVel.z > 0) {
+            this.snapPalm(t, i, carVel);
+            this.smashed++;
+            this.snappedNow = true;
+          }
+        });
+      }
+    }
     for (const t of this.tiles.values()) for (const lh of t.lighthouses || []) lh.userData.beam.rotation.y = time * 0.8;
     // speed traps: which side of each gate line is the buggy on? Crossing it inside the gate triggers it
     this.trapHits = [];
