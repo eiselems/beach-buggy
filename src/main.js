@@ -59,6 +59,7 @@ import { Vehicle } from './vehicle.js';
 import { PropSystem, SPAWN } from './props.js';
 import { BoostSystem, ExhaustFlames } from './boost.js';
 import { Skills } from './skills.js';
+import { Minimap } from './minimap.js';
 import { TireTracks, Particles, emitWheelEffects } from './effects.js';
 import { GameAudio } from './audio.js';
 import { Input } from './input.js';
@@ -220,6 +221,7 @@ async function main() {
   // --- HUD
   const hud = { speed: $('speed'), gear: $('gear'), toast: $('toast'), needle: $('needle'), boost: $('boost'), boostNum: $('boost-num'), speedlines: $('speedlines') };
   let toastTimer = 0;
+  const minimap = new Minimap($('minimap'), props, boost);
   const skills = new Skills({ chain: $('chain'), chainScore: $('chain-score'), chainMult: $('chain-mult'), chainBar: $('chain-bar'), feed: $('feed'), total: $('total') });
   let sinceLanding = 1, stuckTime = 0;
   let lastKmh = 0, wasAirborne = false, fallSpeed = 0, lastThrottle = 0, popsLeft = 0;
@@ -416,6 +418,7 @@ async function main() {
     });
 
     // HUD
+    minimap.update(dt, buggy.root.position, Math.atan2(forward.x, forward.z));
     const kmh = Math.abs(vehicle.speed) * 3.6;
     hud.speed.textContent = Math.round(kmh);
     hud.gear.textContent = vehicle.state.airborne || vehicle.state.upsideDown ? '–' : vehicle.speed < -0.5 ? 'R' : audio.gear;
