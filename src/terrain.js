@@ -4,7 +4,7 @@
 // The shape itself lives in heightfield.js; the slow work happens in web workers (worldWorker.js).
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { terrainFunction, shoreZ } from './heightfield.js';
+import { terrainFunction, shoreZ, SHORE_WAVES, HEAD_WAVES, HEAD_RANGE, TRACK_WAVES, TRACK_DIST } from './heightfield.js';
 import { createSandDetailTexture } from './textures.js';
 
 export { shoreZ, terrainFunction };
@@ -388,6 +388,14 @@ export function createSandMaterial(sand, detail) {
         varying vec3 vWNormal;
         uniform sampler2D tDryD, tDryR, tAltD, tAltN, tWetD, tWetN, tRockD, tRockN, tGrassD, tGrassN;
         uniform vec3 uDryAvg, uAltAvg, uWetAvg, uRockAvg, uGrassAvg;
+        // where the dirt track is (same formulas as heightfield.js), for the wheel ruts
+        float shoreAt( float x ) { return ${SHORE_WAVES.map(([a, f, p]) => `${a.toFixed(4)} * sin(x * ${f.toFixed(6)} + ${p.toFixed(4)})`).join(' + ')}; }
+        float headWave( float x ) { return ${HEAD_WAVES.map(([a, f, p]) => `${a.toFixed(4)} * sin(x * ${f.toFixed(6)} + ${p.toFixed(4)})`).join(' + ')}; }
+        float trackOff( vec3 p ) {
+          float u = shoreAt( p.x ) - p.z;
+          float t = ${TRACK_DIST.toFixed(1)} + ${TRACK_WAVES.map(([a, f, ph]) => `${a.toFixed(4)} * sin(p.x * ${f.toFixed(6)} + ${ph.toFixed(4)})`).join(' + ')};
+          return abs( u - t );
+        }
         // rock texture projected from three sides, so cliffs aren't smeared
         vec3 triplanar( sampler2D t, vec3 p, vec3 n, float scale ) {
           vec3 w = pow( abs( n ), vec3( 4.0 ) );
@@ -434,6 +442,13 @@ export function createSandMaterial(sand, detail) {
         diffuseColor.rgb *= mix( vec3( 1.0 ), det, 0.25 + 0.75 * max( sandy, max( rocky, grassy ) ) );
         diffuseColor.rgb *= 0.9 + 0.2 * macro; // big soft patches
         diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.56, 0.53, 0.5 ), wet * sandy );
+        // two dark, packed wheel ruts along the dirt track
+        float off = trackOff( vWPos );
+        float onTrack = ( 1.0 - smoothstep( 4.0, 6.5, off ) ) * ( 1.0 - smoothstep( ${HEAD_RANGE[0].toFixed(2)}, ${HEAD_RANGE[0].toFixed(2)} + 0.1, headWave( vWPos.x ) ) );
+        float rut = exp( -pow( ( off - 1.7 ) / 0.42, 2.0 ) ) * onTrack;
+        float rutNoise = 0.75 + 0.25 * texture2D( tDryD, vec2( vWPos.x * 0.05, off * 0.4 ) ).g;
+        diffuseColor.rgb *= 1.0 - 0.38 * rut * rutNoise;
+        diffuseColor.rgb *= 1.0 - 0.12 * onTrack;
         `
       )
       .replace(

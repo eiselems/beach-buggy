@@ -58,8 +58,15 @@ export function beachRise(u) {
 }
 
 // The coastal dirt track: winds along behind the beach, through the dunes
+export const TRACK_WAVES = [
+  [45, 0.0031, 1],
+  [20, 0.011, 0.4],
+];
+export const TRACK_DIST = 150;
 export function trackU(x) {
-  return 150 + 45 * Math.sin(x * 0.0031 + 1) + 20 * Math.sin(x * 0.011 + 0.4);
+  let u = TRACK_DIST;
+  for (const [a, f, p] of TRACK_WAVES) u += a * Math.sin(x * f + p);
+  return u;
 }
 // 1 on the track, fading to 0 at its edges (`wide` adds the graded shoulders)
 export function trackAt(x, z, wide = 0) {
@@ -98,7 +105,12 @@ export function terrainFunction(x, z) {
     }
     // the track is graded flat through the dunes, with sloped shoulders
     const track = trackAt(x, z, 8);
-    if (track > 0) h = lerp(h, beachRise(u) + 0.3 * smoothstep(220, 480, u) * 18, track);
+    if (track > 0) {
+      h = lerp(h, beachRise(u) + 0.3 * smoothstep(220, 480, u) * 18, track);
+      // low berms of pushed-up sand along both edges
+      const off = Math.abs(u - trackU(x));
+      h += 0.35 * Math.exp(-(((off - 6.5) / 1.3) ** 2)) * (headlandAt(x) > 0.3 ? 0 : 1);
+    }
     // small bumps you feel while driving
     h += 0.07 * nC(x * 0.06, z * 0.06) * smoothstep(-2, 8, u);
   }
