@@ -21,7 +21,16 @@ export class Skills {
     this.chain += points * this.mult;
     this.mult = Math.min(10, this.mult + 0.5);
     this.idle = 0;
+    // the same skill twice in a row: add to the existing popup instead of stacking another one
+    const top = this.hud.feed.firstChild;
+    if (top && top.dataset.name === name && !top.classList.contains('out')) {
+      top.dataset.points = +top.dataset.points + points;
+      top.querySelector('span').textContent = '+' + (+top.dataset.points).toLocaleString();
+      return;
+    }
     const el = document.createElement('div');
+    el.dataset.name = name;
+    el.dataset.points = points;
     el.className = 'skill';
     el.innerHTML = `<b>${name}</b> <span>+${points.toLocaleString()}</span>`;
     this.hud.feed.prepend(el);
@@ -79,7 +88,12 @@ export class Skills {
 
     // the chain ends if you crash (sudden stop) or do nothing for a while
     if (crashed && this.chain > 0) {
-      this.award('', 0);
+      const el = document.createElement('div');
+      el.className = 'skill crash';
+      el.innerHTML = '<b>CRASH</b> <span>chain halved</span>';
+      this.hud.feed.prepend(el);
+      setTimeout(() => el.classList.add('out'), 1500);
+      setTimeout(() => el.remove(), 2100);
       this.chain = Math.round(this.chain * 0.5); // a crash loses half the chain
       this.bank();
     }

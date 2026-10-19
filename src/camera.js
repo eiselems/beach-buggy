@@ -135,10 +135,14 @@ export class CameraRig {
     if (this.first || snap) {
       this.pos.copy(desired);
       this.look.copy(lookAt);
+      this.offset = desired.clone().sub(target);
       this.first = false;
     } else {
+      // smooth the camera's offset from the buggy (not its absolute position), so the camera
+      // doesn't fall further behind the faster you go: the buggy stays the same size on screen
       const k = 1 - Math.exp(-dt * 6);
-      this.pos.lerp(desired, k);
+      this.offset.lerp(desired.clone().sub(target), k);
+      this.pos.copy(target).add(this.offset);
       this.look.lerp(lookAt, 1 - Math.exp(-dt * 12));
       const y = Math.max(getHeight(this.pos.x, this.pos.z), 0.3) + 0.5;
       if (this.pos.y < y) this.pos.y = y;
@@ -146,8 +150,9 @@ export class CameraRig {
     cam.position.copy(this.pos);
     cam.lookAt(this.look);
     // a little rumble while boosting
-    if ((this.boost > 0.05 || speed > 25) && this.mode < 2) {
-      const a = this.boost * 0.004 + Math.max(0, speed - 25) * 0.00012;
+    this.shake = Math.max(0, (this.shake || 0) - dt * 1.5);
+    if ((this.boost > 0.05 || speed > 25 || this.shake > 0) && this.mode < 2) {
+      const a = this.boost * 0.004 + Math.max(0, speed - 25) * 0.00012 + (this.shake || 0) * 0.03;
       cam.rotation.x += (Math.random() - 0.5) * a;
       cam.rotation.y += (Math.random() - 0.5) * a;
     }

@@ -221,6 +221,7 @@ async function main() {
   const hud = { speed: $('speed'), gear: $('gear'), toast: $('toast'), needle: $('needle'), boost: $('boost'), boostNum: $('boost-num'), speedlines: $('speedlines') };
   let toastTimer = 0;
   const skills = new Skills({ chain: $('chain'), chainScore: $('chain-score'), chainMult: $('chain-mult'), chainBar: $('chain-bar'), feed: $('feed'), total: $('total') });
+  let sinceLanding = 1, stuckTime = 0;
   let lastKmh = 0, wasAirborne = false, fallSpeed = 0, lastThrottle = 0, popsLeft = 0;
   function toast(text) {
     hud.toast.textContent = text;
@@ -365,7 +366,21 @@ async function main() {
     else if (wasAirborne && fallSpeed > 3) audio.thump(fallSpeed);
     wasAirborne = vehicle.state.airborne;
     const kmhNow = Math.abs(vehicle.speed) * 3.6;
-    const crashed = lastKmh - kmhNow > 25 * dt * 60 * 0.2 && lastKmh > 40 && controls.brake < 0.1 && !controls.handbrake;
+    // a crash = a sudden stop while driving on the ground (not a landing, not smashing an umbrella)
+    sinceLanding = vehicle.state.airborne ? 0 : sinceLanding + dt;
+    const crashed = lastKmh - kmhNow > 300 * dt && lastKmh > 40 && sinceLanding > 0.4 && controls.brake < 0.1 && !controls.handbrake;
+    if (crashed) {
+      audio.thump(Math.min(10, (lastKmh - kmhNow) / 6));
+      rig.shake = 0.6;
+    }
+    // stuck (full throttle, not moving)? give it a little hop backwards
+    stuckTime = controls.throttle > 0.5 && kmhNow < 1.5 && !vehicle.state.airborne ? stuckTime + dt : 0;
+    if (stuckTime > 2) {
+      stuckTime = 0;
+      const back = forward.clone().multiplyScalar(-2.5);
+      vehicle.place(bp.x + back.x, bp.z + back.z, Math.atan2(forward.x, forward.z));
+      toast('Unstuck!');
+    }
     lastKmh = kmhNow;
 
     // flipped over? offer a reset

@@ -13,7 +13,7 @@ export const TUNING = {
   maxSpeed: 39,              // m/s (~140 km/h)
   reverseForce: 2400,
   brake: 9,                  // per wheel
-  handbrake: 4,
+  handbrake: 1.5,
   maxSteer: 0.62,            // radians
   steerSpeed: 9,
   frontGrip: 1.3,            // extra grip on the front tyres so the buggy turns in instead of pushing wide
@@ -25,15 +25,15 @@ export const TUNING = {
   groundClearance: 0.4,     // m between the sand and the bottom of the body
   gripDrySand: 1.1,         // soft dry sand: about 0.8 g in corners
   gripWetSand: 1.4,         // firm wet sand near the water grips better
-  gripDrift: 0.5,           // rear grip with the handbrake pulled (fraction of normal grip)
+  gripDrift: 0.6,           // rear grip with the handbrake pulled (fraction of normal grip)
   gripSliding: 0.8,         // rear grip while you hold a drift (fraction; keeps slides going instead of snapping back)
   antiRoll: 9000,
   steerReturn: 11,          // how fast the wheels straighten when you let go
   countersteer: 0.75,       // automatic countersteer in slides (Forza-style steering assist)
   yawDamping: 2.2,          // keeps the buggy straight when you are not steering
   downforce: 0.8,           // N per (m/s)^2: presses the buggy onto bumps at speed
-  maxDriftAngle: 0.6,       // radians (~40°): drift assist stops slides going further than this
-  driftAssist: 40,          // how hard it pulls back (rad/s² per radian over the limit)
+  maxDriftAngle: 0.5,       // radians (~40°): drift assist stops slides going further than this
+  driftAssist: 60,          // how hard it pulls back (rad/s² per radian over the limit)
 };
 
 const UP = { x: 0, y: -1, z: 0 };
@@ -84,7 +84,7 @@ export class Vehicle {
     const lowY = floor + round + lowH;
     const chassis = RAPIER.ColliderDesc.roundCuboid(hx * 0.68, lowH, hz * 0.78, round)
       .setTranslation(cx, lowY, cz)
-      .setFriction(0.4)
+      .setFriction(0.05) // the belly slides over sand instead of grabbing it
       .setRestitution(0.1)
       .setMassProperties(
         m,
@@ -153,7 +153,8 @@ export class Vehicle {
 
     // --- steering (less at high speed so it stays controllable), plus automatic countersteer:
     // the front wheels lean towards where the buggy is actually going, like Forza's steering assist
-    const steerLimit = T.maxSteer / (1 + (speed * speed) / 900);
+    // less lock at high speed, so full lock on a keyboard carves instead of spinning
+    const steerLimit = T.maxSteer / (1 + (speed * speed) / 900 + Math.max(0, speed - 26) * 0.05);
     let target = input.steer * steerLimit;
     // only help when the player isn't steering into the turn themselves
     const steeringIntoSlide = input.steer * slipAngle < 0;
@@ -212,6 +213,9 @@ export class Vehicle {
       const under = swashAt(cp.x, this.time) - h;
       if (under > 0) grip *= 1 - 0.2 * Math.min(1, under * 3);
       if (!w.front) {
+        // power oversteer: full throttle while cornering hard uses up some of the rear tyres' grip
+        const cornering = Math.min(1, Math.abs(input.steer)) * Math.min(1, Math.max(0, (speed - 12) / 6)) * Math.max(0, Math.min(1, (30 - speed) / 8));
+        grip *= 1 - 0.38 * input.throttle * cornering;
         if (input.handbrake) grip *= T.gripDrift;
         else if (Math.abs(slipAngle) > 0.15) {
           // throttle keeps the rear loose once a slide has started (power-over drifting)
@@ -258,21 +262,24 @@ export class Vehicle {
       const yawRate = av.x * up.x + av.y * up.y + av.z * up.z;
       // countersteering (steering against the slide) shouldn't be fought by the damping either
       const asked = Math.abs(input.steer) > 0.1 || input.handbrake || Math.abs(slipAngle) > 0.2;
-      const k = (asked ? 0.25 : 1) * T.yawDamping * Math.min(1, Math.abs(speed) / 8);
+      // when a slide is snapping back (rotating towards straight), damp hard so it doesn't swing
+      // through to the other side like a pendulum
+      const snapping = Math.abs(slipAngle) > 0.08 && yawRate * slipAngle > 0;
+      const k = (snapping ? 2.2 : asked ? 0.25 : 1) * T.yawDamping * Math.min(1, Math.abs(speed) / 8);
       const inertia = 600;
       const imp = -yawRate * inertia * k * dt;
       body.applyTorqueImpulse({ x: up.x * imp, y: up.y * imp, z: up.z * imp }, true);
       // drift assist: if the slide gets too wide, gently rotate the buggy back towards its direction of travel
       const excess = Math.abs(slipAngle) - T.maxDriftAngle;
       if (excess > 0) {
-        const a = Math.sign(slipAngle) * Math.min(excess, 0.6) * T.driftAssist * inertia * dt;
+        const a = Math.sign(slipAngle) * Math.min(excess, 0.6) * T.driftAssist * (1 + Math.max(0, speed - 25) / 10) * inertia * dt;
         body.applyTorqueImpulse({ x: up.x * a, y: up.y * a, z: up.z * a }, true);
       }
       // while drifting, the throttle holds the angle and keeps the speed up (less scrub)
-      if (Math.abs(slipAngle) > 0.2 && input.throttle > 0.3 && !input.handbrake) {
+      if (Math.abs(slipAngle) > 0.2 && (input.throttle > 0.3 || input.handbrake)) {
         const hold = Math.sign(slipAngle) * -0.6 * input.throttle * inertia * dt;
         body.applyTorqueImpulse({ x: up.x * hold, y: up.y * hold, z: up.z * hold }, true);
-        const push = T.mass * 3.5 * input.throttle * dt;
+        const push = T.mass * 4.5 * Math.max(input.throttle, input.handbrake ? 0.6 : 0) * dt;
         const vx = lv.x, vz = lv.z, vl = Math.hypot(vx, vz) || 1;
         body.applyImpulse({ x: (vx / vl) * push, y: 0, z: (vz / vl) * push }, true);
       }
@@ -329,6 +336,19 @@ export class Vehicle {
     }
 
     c.updateVehicle(dt);
+
+    // --- landing assist: touching down shouldn't scrub off most of your speed
+    const flat = body.linvel();
+    const hs = Math.hypot(flat.x, flat.z);
+    if (contacts === 0) this.airSpeed = hs;
+    else if (this.airSpeed > 5) {
+      const keep = this.airSpeed * 0.88;
+      if (hs < keep && hs > 0.5) {
+        const k = keep / hs;
+        body.setLinvel({ x: flat.x * k, y: flat.y, z: flat.z * k }, true);
+      }
+      this.airSpeed = 0;
+    }
 
     // --- copy state out for the visuals and effects
     const st = this.state;

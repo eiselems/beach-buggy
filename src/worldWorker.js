@@ -153,7 +153,7 @@ function buildProps({ tx, tz, size, spawn }) {
     let scale = 0;
     if (head > 0.2 && d > -60 && d < 60 && rnd() < head) scale = range(0.8, 3.2);
     else if (d > -6 && d < 22 && rnd() < 0.12 && noise(x * 0.02, 3) > 0.25) scale = range(0.4, 1.4);
-    else if (d < -90 && d > -1600 && rnd() < 0.08) scale = range(0.5, d < -600 ? 3.5 : 2.2);
+    else if (d < -90 && d > -1600 && rnd() < 0.08) scale = range(0.5, d < -600 ? 2.5 : 1.8);
     if (!scale || nearSpawn(x, z, 25)) continue;
     const size2 = scale * 2;
     rocks.push(x, terrainFunction(x, z) - size2 * 0.12, z, range(-0.2, 0.2), range(0, Math.PI * 2), range(-0.2, 0.2), size2, range(0.7, 1.1), Math.floor(rnd() * 3));
@@ -187,7 +187,7 @@ function buildProps({ tx, tz, size, spawn }) {
     const z = shoreZ(x) - range(14, 70);
     if (inTile(x, z) && !nearSpawn(x, z, 60) && normalY(x, z) > 0.97 && headlandAt(x) < 0.1) {
       const big = rnd() < 0.4;
-      ramps.push(x, z, rnd() < 0.5 ? Math.PI / 2 : -Math.PI / 2, big ? 9 : 7, big ? 2.2 : 1.5, big ? 5 : 4);
+      ramps.push(x, z, rnd() < 0.5 ? Math.PI / 2 : -Math.PI / 2, big ? 9 : 7, big ? 1.6 : 1.1, big ? 5 : 4);
     }
   }
 

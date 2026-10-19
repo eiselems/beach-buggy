@@ -308,7 +308,7 @@ export class PropSystem {
     placeDriftwood(scene, world);
     placeLifeguardTower(scene, world, 95);
     placeLifeguardTower(scene, world, -330);
-    for (const [x, u, yaw, l, h, w] of [[-70, 12, Math.PI / 2], [230, 14, -Math.PI / 2, 9, 2.2, 5], [40, 60, Math.PI, 6, 1.2, 4]]) {
+    for (const [x, u, yaw, l, h, w] of [[-70, 12, Math.PI / 2], [230, 14, -Math.PI / 2, 9, 1.6, 5], [40, 60, Math.PI, 6, 1.2, 4]]) {
       const r = makeRamp(x, shoreZ(x) - u, yaw, l, h, w);
       scene.add(r.mesh);
       world.createCollider(r.collider());
@@ -559,7 +559,8 @@ function rockCollider(geo, pos, q, scl) {
   const pts = [];
   const tmp = new THREE.Vector3();
   for (let k = 0; k < verts.length / 3; k += stride) {
-    tmp.set(verts[k * 3], verts[k * 3 + 1], verts[k * 3 + 2]).multiply(scl).applyQuaternion(q);
+    // a bit smaller than the visible rock, so you never hit thin air
+    tmp.set(verts[k * 3] * 0.85, verts[k * 3 + 1] * 0.85, verts[k * 3 + 2] * 0.85).multiply(scl).applyQuaternion(q);
     pts.push(tmp.x, tmp.y, tmp.z);
   }
   const desc = RAPIER.ColliderDesc.convexHull(new Float32Array(pts));
