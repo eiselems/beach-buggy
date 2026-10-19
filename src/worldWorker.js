@@ -211,7 +211,20 @@ function buildProps({ tx, tz, size, spawn }) {
     pads.push(x, terrainFunction(x, z), z, 1);
   }
 
+  // speed traps (Forza style): a camera gate on the beach, measures how fast you pass
+  const traps = [];
+  if (rnd() < 0.3) {
+    const x = range(x0 + 30, x0 + size - 30);
+    const z = shoreZ(x) - range(20, 40);
+    if (inTile(x, z) && headlandAt(x) < 0.1 && !nearSpawn(x, z, 40)) {
+      // face along the coast
+      const dz = shoreZ(x + 5) - shoreZ(x - 5);
+      traps.push(x, terrainFunction(x, z), z, Math.atan2(10, dz));
+    }
+  }
+
   const out = {
+    traps: new Float32Array(traps),
     palms: new Float32Array(palms),
     rocks: new Float32Array(rocks),
     grass: new Float32Array(grass),

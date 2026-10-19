@@ -322,6 +322,10 @@ async function main() {
     terrain.update(camera.position);
     props.update(time, camera, buggy.root.position, dt, lv);
 
+    for (const hit of props.trapHits) {
+      skills.award('SPEED TRAP', hit.kmh * 6);
+      toast(`📸 Speed trap: ${Math.round(hit.kmh)} km/h${hit.best ? ' — new best!' : ''}`);
+    }
     skills.update(dt, vehicle, { smashed: props.smashed, crashed: crashed || controls.reset });
     const slip = vehicle.state.slip.reduce((a, b) => a + b, 0) / 4;
     audio.update(dt, {

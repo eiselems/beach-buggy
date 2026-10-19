@@ -369,6 +369,15 @@ export class PropSystem {
     t.grass = null;
     t.colliders = null;
     if (this.boost) this.boost.addTile(t.key, d.pads);
+    t.traps = [];
+    for (let i = 0; i < d.traps.length; i += 4) {
+      const [x, y, z, yaw] = d.traps.subarray(i, i + 4);
+      const mesh = makeSpeedTrap();
+      mesh.position.set(x, y, z);
+      mesh.rotation.y = yaw;
+      this.scene.add(mesh);
+      t.traps.push({ mesh, x, z, dir: { x: Math.sin(yaw), z: Math.cos(yaw) }, side: null, best: 0 });
+    }
   }
 
   makeGrass(t) {
@@ -408,6 +417,7 @@ export class PropSystem {
       m.dispose();
     }
     for (const r of t.ramps || []) this.scene.remove(r.mesh);
+    for (const tr of t.traps || []) this.scene.remove(tr.mesh);
     if (t.colliders) this.removeColliders(t);
     if (this.boost) this.boost.removeTile(t.key);
   }
@@ -415,6 +425,25 @@ export class PropSystem {
   update(time, camera, focus, dt = 0, carVel = null) {
     wind.value = time;
     this.smashed = carVel ? updateSmashables(dt, focus, carVel) : 0;
+    // speed traps: which side of each gate line is the buggy on? Crossing it inside the gate triggers it
+    this.trapHits = [];
+    if (carVel) {
+      for (const t of this.tiles.values()) {
+        for (const tr of t.traps || []) {
+          const dx = focus.x - tr.x, dz = focus.z - tr.z;
+          const along = dx * tr.dir.x + dz * tr.dir.z;
+          const across = Math.abs(dx * tr.dir.z - dz * tr.dir.x);
+          const side = along > 0;
+          if (tr.side !== null && side !== tr.side && across < 9) {
+            const kmh = Math.hypot(carVel.x, carVel.z) * 3.6;
+            const best = kmh > tr.best;
+            tr.best = Math.max(tr.best, kmh);
+            this.trapHits.push({ kmh, best });
+          }
+          tr.side = across < 40 ? side : null;
+        }
+      }
+    }
     this.frame++;
     const Q = this.quality;
     const reach = Q.propDistance + TILE;
@@ -467,6 +496,43 @@ export class PropSystem {
       else if (t.colliders && dist > COLLIDE_OUT) this.removeColliders(t);
     }
   }
+}
+
+// a speed camera gate: two posts and a sign across the top
+let trapParts = null;
+function makeSpeedTrap() {
+  if (!trapParts) {
+    const c = document.createElement('canvas');
+    c.width = 512;
+    c.height = 96;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ff6a2b';
+    ctx.fillRect(0, 0, 512, 96);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'italic 900 58px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('SPEED TRAP', 256, 68);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    trapParts = {
+      post: new THREE.CylinderGeometry(0.18, 0.22, 6, 10),
+      sign: new THREE.BoxGeometry(14, 1.6, 0.2),
+      postMat: new THREE.MeshStandardMaterial({ color: 0x2a2f36, metalness: 0.6, roughness: 0.4 }),
+      signMat: new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.6 }),
+    };
+  }
+  const g = new THREE.Group();
+  for (const sx of [-7, 7]) {
+    const p = new THREE.Mesh(trapParts.post, trapParts.postMat);
+    p.position.set(sx, 3, 0);
+    p.castShadow = true;
+    g.add(p);
+  }
+  const sign = new THREE.Mesh(trapParts.sign, trapParts.signMat);
+  sign.position.y = 6;
+  sign.castShadow = true;
+  g.add(sign);
+  return g;
 }
 
 function swap(scene, meshes, on) {
