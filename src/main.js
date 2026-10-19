@@ -56,7 +56,8 @@ import { QUALITY } from './quality.js';
 import { createOcean } from './ocean.js';
 import { loadBuggy, BUGGY_CREDIT } from './buggy.js';
 import { Vehicle } from './vehicle.js';
-import { PropSystem, SPAWN } from './props.js';
+import { PropSystem, SPAWN, wind } from './props.js';
+import { GrassField } from './grass.js';
 import { BoostSystem, ExhaustFlames } from './boost.js';
 import { Skills } from './skills.js';
 import { Minimap } from './minimap.js';
@@ -111,6 +112,7 @@ async function main() {
   const physTerrain = new PhysicsTerrain(world, pool);
   const boost = new BoostSystem(scene, getHeight);
   const props = new PropSystem(scene, world, pool, assets, QUALITY, boost);
+  const grassField = new GrassField(scene, QUALITY, wind);
 
   const spawnPoint = new THREE.Vector3(SPAWN.x, getHeight(SPAWN.x, SPAWN.z) + 2, SPAWN.z);
   camera.position.copy(spawnPoint).add(new THREE.Vector3(0, 3, -8));
@@ -413,6 +415,7 @@ async function main() {
     env.update(buggy.root.position);
     ocean.update(time, camera.position);
     terrain.update(camera.position);
+    grassField.update(camera.position);
     props.update(time, camera, buggy.root.position, dt, lv);
 
     for (const hit of props.trapHits) {

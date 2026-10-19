@@ -168,18 +168,18 @@ const fragmentShader = /* glsl */ `
     float fb = texture2D(uFoamTex, p * 0.043 - vec2(uTime * 0.012, uTime * 0.02)).r;
     float ft = fa * fb * 2.2;
     // a thin line of foam right at the water's edge, plus lacy left-over foam in the swash
-    float shore = 1.0 - smoothstep(0.0, 0.1, depth);
+    float shore = 1.0 - smoothstep(0.0, 0.22, depth);
     float fl = texture2D(uFoamTex, p * 0.37 + vec2(uTime * 0.02, 0.0)).r * texture2D(uFoamTex, p * 0.15 - vec2(0.0, uTime * 0.03)).r * 2.0;
-    float lace = smoothstep(0.55, 0.8, fl) * (1.0 - smoothstep(0.04, 0.3, depth)) * 0.75;
+    float lace = smoothstep(0.45, 0.75, fl) * (1.0 - smoothstep(0.04, 0.6, depth)) * 0.85;
     // breaking waves: thin lines of foam rolling in towards the beach, streaked along the shore
     float streak = texture2D(uFoamTex, p * vec2(0.035, 0.22) + vec2(uTime * 0.01, 0.0)).r;
     float wave = sin(still * 2.2 + uTime * 1.25 + streak * 1.5 + p.x * 0.012);
-    float bandMask = smoothstep(0.15, 0.5, still) * (1.0 - smoothstep(1.2, 2.2, still));
-    float bands = smoothstep(0.82, 1.0, wave) * bandMask * smoothstep(0.25, 0.6, streak);
+    float bandMask = smoothstep(0.1, 0.4, still) * (1.0 - smoothstep(1.6, 2.8, still));
+    float bands = smoothstep(0.62, 0.97, wave) * bandMask * smoothstep(0.15, 0.5, streak);
     float whitecaps = smoothstep(0.92, 1.0, vCrest) * 0.35 * smoothstep(0.5, 0.8, fb);
     float foamAmount = clamp(shore + bands + whitecaps, 0.0, 1.0);
-    float foam = max(foamAmount * smoothstep(0.35, 0.7, ft + shore * 0.3 + bands * 0.3), lace);
-    vec3 foamColor = vec3(0.95) * uLight * (0.6 + 0.4 * max(dot(vNormal, uSunDir), 0.0)) * sunUp;
+    float foam = max(foamAmount * smoothstep(0.2, 0.55, ft + shore * 0.5 + bands * 0.45), lace);
+    vec3 foamColor = vec3(2.4) * uLight * (0.6 + 0.4 * max(dot(vNormal, uSunDir), 0.0)) * sunUp;
     col = mix(col, foamColor, foam);
 
     // shallow water is see-through

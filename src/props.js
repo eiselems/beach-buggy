@@ -11,7 +11,7 @@ export const SPAWN = { x: 0, z: shoreZ(0) - 25 };
 const nearSpawn = (x, z, r) => Math.hypot(x - SPAWN.x, z - SPAWN.z) < r;
 
 // Wind sway shared by plants
-const wind = { value: 0 };
+export const wind = { value: 0 };
 function addWind(material, strength, heightScale) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uWindTime = wind;

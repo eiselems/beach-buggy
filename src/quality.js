@@ -20,6 +20,8 @@ const PRESETS = {
     oceanSegments: 420,
     sandDetail: true,      // extra texture layers that hide repetition
     grassDistance: 220,
+    grassBlades: 16000,    // grass tufts near the camera on the hills
+    grassBladeDistance: 48,
     particles: 4000,
   },
   low: {
@@ -37,6 +39,8 @@ const PRESETS = {
     oceanSegments: 200,
     sandDetail: false,
     grassDistance: 130,
+    grassBlades: 4000,
+    grassBladeDistance: 28,
     particles: 1500,
   },
 };
