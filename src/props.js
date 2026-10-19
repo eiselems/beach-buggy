@@ -480,7 +480,7 @@ export class PropSystem {
       if (!t.ready) continue;
       const camDist = Math.max(0, Math.hypot(cx - camera.position.x, cz - camera.position.z) - TILE * 0.7);
       if (t.palmNear) {
-        const near = camDist < 220;
+        const near = camDist < Q.palmDetail;
         const visible = camDist < Q.propDistance;
         swap(this.scene, t.palmNear, near && visible);
         swap(this.scene, t.palmFar, !near && visible);

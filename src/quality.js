@@ -16,6 +16,7 @@ const PRESETS = {
     terrainSplit: 1.3,     // bigger = detailed ground reaches further
     viewDistance: 7000,    // how far the ground is drawn (m)
     propDistance: 1400,    // palms and rocks (m)
+    palmDetail: 220,       // full-detail palms closer than this (m), simple ones further away
     oceanSegments: 420,
     sandDetail: true,      // extra texture layers that hide repetition
     grassDistance: 220,
@@ -31,7 +32,8 @@ const PRESETS = {
     terrainMinPatch: 128,
     terrainSplit: 1.2,
     viewDistance: 4000,
-    propDistance: 700,
+    propDistance: 500,
+    palmDetail: 110,
     oceanSegments: 200,
     sandDetail: false,
     grassDistance: 130,
