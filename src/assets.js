@@ -34,7 +34,7 @@ export async function loadAssets(renderer, onProgress = () => {}) {
     });
 
   const [
-    dryD, dryN, dryR, altD, altN, wetD, wetN, waterN,
+    dryD, dryN, dryR, altD, altN, wetD, wetN, waterN, rockD, rockN, grassD, grassN,
     rock09, rock07, boulder, hdr, palm, palmFar, grass,
   ] = await Promise.all([
     tex('aerial_beach_01_diffuse.jpg', true),
@@ -45,6 +45,10 @@ export async function loadAssets(renderer, onProgress = () => {}) {
     tex('damp_beach_sand_diffuse.jpg', true),
     tex('damp_beach_sand_nor_gl.jpg'),
     tex('waternormals.jpg'),
+    tex('rock_face_diff.jpg', true),
+    tex('rock_face_nor_gl.jpg'),
+    tex('aerial_grass_rock_diff.jpg', true),
+    tex('aerial_grass_rock_nor_gl.jpg'),
     gltfLoader.loadAsync(BASE + 'models/rock_09.glb'),
     gltfLoader.loadAsync(BASE + 'models/rock_07.glb'),
     gltfLoader.loadAsync(BASE + 'models/boulder_05.glb'),
@@ -97,6 +101,9 @@ export async function loadAssets(renderer, onProgress = () => {}) {
       dryAvg: averageColor(dryD.image),
       altAvg: averageColor(altD.image),
       wetAvg: averageColor(wetD.image),
+      rockD, rockN, grassD, grassN,
+      rockAvg: averageColor(rockD.image),
+      grassAvg: averageColor(grassD.image),
     },
     waterNormals: waterN,
     rocks: [rockFrom(rock09), rockFrom(rock07), rockFrom(boulder)],

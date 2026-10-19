@@ -106,7 +106,7 @@ const mixInto = (c, t, k) => {
   c[2] += (t[2] - c[2]) * k;
 };
 
-// out: [r, g, b, wet, sandy]; ny = the y part of the ground normal
+// out: [r, g, b, wet, sandy, rocky]; ny = the y part of the ground normal
 export function surfaceAt(x, z, h, ny, out) {
   const u = shoreZ(x) - z;
   const slope = 1 - ny;
@@ -114,6 +114,7 @@ export function surfaceAt(x, z, h, ny, out) {
   mixInto(c, DRY_WARM, smoothstep(-0.4, 0.6, fbm(nB, x * 0.015, z * 0.015, 3)));
   mixInto(c, UNDERWATER, smoothstep(0, -3, h));
   let sandy = 1;
+  let rocky = 0;
   const veg = smoothstep(160, 300, u) * smoothstep(0.35, 0.1, slope);
   if (veg > 0) {
     const vegNoise = smoothstep(-0.3, 0.4, fbm(nA, x * 0.01, z * 0.01, 3));
@@ -130,11 +131,13 @@ export function surfaceAt(x, z, h, ny, out) {
     mixInto(c, ROCK, rockiness);
     mixInto(c, ROCK_DARK, rockiness * smoothstep(0.4, 0.8, slope) * 0.7);
     sandy -= rockiness;
+    rocky = rockiness;
   }
   out[0] = c[0];
   out[1] = c[1];
   out[2] = c[2];
   out[3] = 1 - smoothstep(0.1, 0.9, h);
   out[4] = Math.max(0, sandy);
+  out[5] = Math.min(1, rocky);
   return out;
 }

@@ -269,7 +269,7 @@ export class TerrainLOD {
     geo.setAttribute('position', new THREE.BufferAttribute(res.position, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(res.normal, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(res.color, 3));
-    geo.setAttribute('surface', new THREE.BufferAttribute(res.surface, 2));
+    geo.setAttribute('surface', new THREE.BufferAttribute(res.surface, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(res.uv, 2));
     geo.setIndex(leafIndex(this.cells));
     const s = leaf.size;
@@ -369,21 +369,32 @@ export function createSandMaterial(sand, detail) {
     tAltD: { value: sand.altD }, tAltN: { value: sand.altN },
     tWetD: { value: sand.wetD }, tWetN: { value: sand.wetN },
     uDryAvg: { value: sand.dryAvg }, uAltAvg: { value: sand.altAvg }, uWetAvg: { value: sand.wetAvg },
+    tRockD: { value: sand.rockD }, tRockN: { value: sand.rockN }, tGrassD: { value: sand.grassD }, tGrassN: { value: sand.grassN },
+    uRockAvg: { value: sand.rockAvg }, uGrassAvg: { value: sand.grassAvg },
   };
   // the extra texture layers that hide tiling are skipped on low quality
   if (detail) material.defines = { SAND_DETAIL: '' };
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec2 surface;\nvarying vec2 vSurface;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurface = surface;');
+      .replace('#include <common>', '#include <common>\nattribute vec3 surface;\nvarying vec3 vSurface;\nvarying vec3 vWPos;\nvarying vec3 vWNormal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurface = surface;\nvWPos = (modelMatrix * vec4(position, 1.0)).xyz;\nvWNormal = normal;');
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
         `#include <common>
-        varying vec2 vSurface;
-        uniform sampler2D tDryD, tDryR, tAltD, tAltN, tWetD, tWetN;
-        uniform vec3 uDryAvg, uAltAvg, uWetAvg;
+        varying vec3 vSurface;
+        varying vec3 vWPos;
+        varying vec3 vWNormal;
+        uniform sampler2D tDryD, tDryR, tAltD, tAltN, tWetD, tWetN, tRockD, tRockN, tGrassD, tGrassN;
+        uniform vec3 uDryAvg, uAltAvg, uWetAvg, uRockAvg, uGrassAvg;
+        // rock texture projected from three sides, so cliffs aren't smeared
+        vec3 triplanar( sampler2D t, vec3 p, vec3 n, float scale ) {
+          vec3 w = pow( abs( n ), vec3( 4.0 ) );
+          w /= ( w.x + w.y + w.z );
+          p = mod( p, 4096.0 ) * scale;
+          return texture2D( t, p.zy ).rgb * w.x + texture2D( t, p.xz ).rgb * w.y + texture2D( t, p.xy ).rgb * w.z;
+        }
         const mat2 ROT = mat2(0.788, -0.616, 0.616, 0.788); // ~38 degrees
         `
       )
@@ -407,9 +418,19 @@ export function createSandMaterial(sand, detail) {
           det = mix( det, texture2D( tAltD, uvC ).rgb / uAltAvg, altMix );
         #endif
         det = mix( det, texture2D( tWetD, uvC ).rgb / uWetAvg, wet );
+        float rocky = vSurface.z;
+        float grassy = clamp( 1.0 - sandy - rocky, 0.0, 1.0 );
+        if ( grassy > 0.01 ) {
+          // two sizes of the grass texture, blended by large noise, so it doesn't look like a checkerboard
+          vec3 g1 = texture2D( tGrassD, vMapUv * 0.35 ).rgb;
+          vec3 g2 = texture2D( tGrassD, ROT * ( vMapUv * 0.083 ) + 0.31 ).rgb;
+          vec3 gDet = mix( g1, g2, smoothstep( 0.25, 0.75, macro2 ) ) / uGrassAvg;
+          det = mix( det, mix( gDet, vec3( 1.0 ), 0.25 ), grassy );
+        }
+        if ( rocky > 0.01 ) det = mix( det, triplanar( tRockD, vWPos, normalize( vWNormal ), 0.14 ) / uRockAvg, rocky );
         // calm the detail down in the distance where it would just shimmer
         det = mix( det, vec3( 1.0 ), smoothstep( 60.0, 400.0, camDist ) * 0.6 );
-        diffuseColor.rgb *= mix( vec3( 1.0 ), det, 0.25 + 0.75 * sandy );
+        diffuseColor.rgb *= mix( vec3( 1.0 ), det, 0.25 + 0.75 * max( sandy, max( rocky, grassy ) ) );
         diffuseColor.rgb *= 0.9 + 0.2 * macro; // big soft patches
         diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.56, 0.53, 0.5 ), wet * sandy );
         `
@@ -429,7 +450,9 @@ export function createSandMaterial(sand, detail) {
           mapN = mix( mapN, texture2D( tAltN, uvC ).xyz * 2.0 - 1.0, altMix );
         #endif
         mapN = mix( mapN, texture2D( tWetN, uvC ).xyz * 2.0 - 1.0, wet );
-        mapN.xy *= normalScale * ( 0.3 + 0.7 * sandy ) * ( 1.0 - 0.6 * smoothstep( 40.0, 300.0, camDist ) );
+        if ( grassy > 0.01 ) mapN = mix( mapN, texture2D( tGrassN, vMapUv * 0.35 ).xyz * 2.0 - 1.0, grassy );
+        if ( rocky > 0.01 ) mapN = mix( mapN, texture2D( tRockN, mod( vWPos.xz, 4096.0 ) * 0.14 ).xyz * 2.0 - 1.0, rocky );
+        mapN.xy *= normalScale * ( 0.3 + 0.7 * max( sandy, max( rocky, grassy ) ) ) * ( 1.0 - 0.6 * smoothstep( 40.0, 300.0, camDist ) );
         normal = normalize( tbn * mapN );
         `
       );

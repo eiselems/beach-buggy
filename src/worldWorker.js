@@ -28,9 +28,9 @@ function buildLeaf({ x0, z0, size, cells }) {
   const position = new Float32Array(verts * 3);
   const normal = new Float32Array(verts * 3);
   const color = new Float32Array(verts * 3);
-  const surface = new Float32Array(verts * 2);
+  const surface = new Float32Array(verts * 3);
   const uv = new Float32Array(verts * 2);
-  const s = [0, 0, 0, 0, 0];
+  const s = [0, 0, 0, 0, 0, 0];
   let minY = Infinity, maxY = -Infinity;
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
@@ -54,8 +54,9 @@ function buildLeaf({ x0, z0, size, cells }) {
       color[k * 3] = s[0];
       color[k * 3 + 1] = s[1];
       color[k * 3 + 2] = s[2];
-      surface[k * 2] = s[3];
-      surface[k * 2 + 1] = s[4];
+      surface[k * 3] = s[3];
+      surface[k * 3 + 1] = s[4];
+      surface[k * 3 + 2] = s[5];
       // texture coordinates repeat every 4 m; keep the numbers small far from the origin
       uv[k * 2] = (x % 4096) * 0.25;
       uv[k * 2 + 1] = (z % 4096) * 0.25;
@@ -76,7 +77,7 @@ function buildLeaf({ x0, z0, size, cells }) {
       position[dst * 3 + 1] -= drop;
       normal.copyWithin(dst * 3, src * 3, src * 3 + 3);
       color.copyWithin(dst * 3, src * 3, src * 3 + 3);
-      surface.copyWithin(dst * 2, src * 2, src * 2 + 2);
+      surface.copyWithin(dst * 3, src * 3, src * 3 + 3);
       uv.copyWithin(dst * 2, src * 2, src * 2 + 2);
     }
   });
@@ -124,12 +125,12 @@ function buildProps({ tx, tz, size, spawn }) {
   // palm trees: groves along the beach, a few scattered inland
   const palms = [];
   if (maxU > 20 && minU < 900) {
-    for (let t = 0; t < 90 && palms.length < 60; t++) {
+    for (let t = 0; t < 110 && palms.length < 70 * 6; t++) {
       const x = range(x0, x0 + size), z = range(z0, z0 + size);
       const u = shoreZ(x) - z;
       if (u < 30 || u > 900) continue;
       const cluster = noise(x * 0.012, z * 0.012);
-      const need = u < 150 ? 0.15 : u < 260 ? 0.4 : 0.62;
+      const need = u < 150 ? 0.15 : u < 260 ? 0.4 : 0.48;
       if (cluster < need) continue;
       if (nearSpawn(x, z, 18)) continue;
       if (normalY(x, z) < 0.9) continue;
