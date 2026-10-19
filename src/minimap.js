@@ -88,6 +88,8 @@ export class Minimap {
     for (const t of this.props.tiles.values()) {
       for (const tr of t.traps || []) dot(tr.x, tr.z, 5, '#e8412c');
       for (const lh of t.lighthouses || []) dot(lh.position.x, lh.position.z, 5, '#ffffff');
+      for (const h of t.huts || []) dot(h.position.x, h.position.z, 3, '#8a5a3a');
+      for (const j of t.jumps || []) dot(j.x, j.z, 5, '#ffcc00');
     }
     ctx.restore();
 

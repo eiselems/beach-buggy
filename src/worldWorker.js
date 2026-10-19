@@ -259,7 +259,41 @@ function buildProps({ tx, tz, size, spawn }) {
     }
   }
 
+  // a little village of beach shacks now and then, on flat ground inland
+  const huts = [];
+  if (rnd() < 0.22) {
+    const cx = range(x0 + 40, x0 + size - 40), cz = shoreZ(cx) - range(260, 700);
+    if (inTile(cx, cz) && normalY(cx, cz) > 0.96 && trackAt(cx, cz, 30) === 0) {
+      const n = 4 + Math.floor(rnd() * 4);
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2 + rnd() * 0.5, r = 14 + rnd() * 10;
+        const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+        if (normalY(x, z) < 0.93) continue;
+        huts.push(x, terrainFunction(x, z), z, a + Math.PI / 2 + range(-0.3, 0.3), range(0.85, 1.25), Math.floor(rnd() * 4));
+      }
+    }
+  }
+
+  // signature jumps: a big ramp on the hills with a danger sign, a big boost pad in front
+  const jumps = [];
+  if (rnd() < 0.18) {
+    const x = range(x0 + 40, x0 + size - 40), z = shoreZ(x) - range(250, 600);
+    const yaw = rnd() * Math.PI * 2;
+    // need a straight, clear run-up and landing
+    let ok = inTile(x, z) && trackAt(x, z, 20) === 0;
+    for (let d = -60; d <= 140 && ok; d += 20) {
+      const px = x + Math.sin(yaw) * d, pz = z + Math.cos(yaw) * d;
+      if (normalY(px, pz) < 0.93) ok = false;
+    }
+    if (ok) {
+      jumps.push(x, z, yaw);
+      pads.push(x - Math.sin(yaw) * 45, terrainFunction(x - Math.sin(yaw) * 45, z - Math.cos(yaw) * 45), z - Math.cos(yaw) * 45, 1);
+    }
+  }
+
   const out = {
+    huts: new Float32Array(huts),
+    jumps: new Float32Array(jumps),
     lighthouses: new Float32Array(lighthouses),
     posts: new Float32Array(posts),
     traps: new Float32Array(traps),

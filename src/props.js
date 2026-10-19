@@ -391,6 +391,30 @@ export class PropSystem {
       t.posts = this.instanced(postParts, ms, null, true);
       for (const m of t.posts) this.scene.add(m);
     }
+    // beach-shack villages
+    t.huts = [];
+    for (let i = 0; i < d.huts.length; i += 6) {
+      const [x, y, z, yaw, sc, v] = d.huts.subarray(i, i + 6);
+      const hut = makeHut(v);
+      hut.position.set(x, y - 0.1, z);
+      hut.rotation.y = yaw;
+      hut.scale.setScalar(sc);
+      this.scene.add(hut);
+      t.huts.push(hut);
+    }
+    // signature jumps with a danger sign
+    t.jumps = [];
+    for (let i = 0; i < d.jumps.length; i += 3) {
+      const [x, z, yaw] = d.jumps.subarray(i, i + 3);
+      const r = makeRamp(x, z, yaw, 12, 2.6, 6);
+      this.scene.add(r.mesh);
+      t.ramps.push(r);
+      const sign = makeDangerSign();
+      sign.position.set(x + Math.cos(yaw) * 5, getHeight(x + Math.cos(yaw) * 5, z - Math.sin(yaw) * 5), z - Math.sin(yaw) * 5);
+      sign.rotation.y = yaw + Math.PI;
+      this.scene.add(sign);
+      t.jumps.push({ x, z, sign });
+    }
     t.lighthouses = [];
     for (let i = 0; i < d.lighthouses.length; i += 3) {
       const lh = makeLighthouse();
@@ -438,6 +462,10 @@ export class PropSystem {
     });
     for (const r of t.rockItems) add(rockCollider(this.assets.rocks[r.v].geometry, r.pos, r.q, r.scale));
     for (const r of t.ramps) add(r.collider());
+    for (const h of t.huts) {
+      const q = new THREE.Quaternion().setFromEuler(h.rotation);
+      add(RAPIER.ColliderDesc.cuboid(2.2 * h.scale.x, 1.6 * h.scale.x, 1.8 * h.scale.x).setTranslation(h.position.x, h.position.y + 1.6 * h.scale.x, h.position.z).setRotation(q));
+    }
     for (const lh of t.lighthouses) add(RAPIER.ColliderDesc.cylinder(9, 2.6).setTranslation(lh.position.x, lh.position.y + 9, lh.position.z));
   }
 
@@ -489,6 +517,8 @@ export class PropSystem {
     for (const r of t.ramps || []) this.scene.remove(r.mesh);
     for (const tr of t.traps || []) this.scene.remove(tr.mesh);
     for (const lh of t.lighthouses || []) this.scene.remove(lh);
+    for (const h of t.huts || []) this.scene.remove(h);
+    for (const j of t.jumps || []) this.scene.remove(j.sign);
     for (const f of t.fallen || []) this.scene.remove(f);
     if (t.colliders) this.removeColliders(t);
     if (this.boost) this.boost.removeTile(t.key);
@@ -631,6 +661,73 @@ function makeSpeedTrap() {
   sign.position.y = 6;
   sign.castShadow = true;
   g.add(sign);
+  return g;
+}
+
+// a wooden beach shack on short stilts, with a palm-leaf roof (4 colour variants)
+let hutParts = null;
+function makeHut(variant) {
+  if (!hutParts) {
+    const wall = new THREE.BoxGeometry(4.4, 2.4, 3.6).translate(0, 1.6, 0);
+    const roof = new THREE.ConeGeometry(3.6, 1.8, 4).rotateY(Math.PI / 4).scale(1.25, 1, 1.05).translate(0, 3.7, 0);
+    const door = new THREE.BoxGeometry(0.9, 1.6, 0.06).translate(0.8, 1.2, 1.81);
+    const win = new THREE.BoxGeometry(1.0, 0.7, 0.06).translate(-1.1, 1.9, 1.81);
+    const deck = new THREE.BoxGeometry(5.2, 0.15, 5.0).translate(0, 0.35, 0.5);
+    hutParts = {
+      wall, roof, door, win, deck,
+      walls: ['#c98f5a', '#7fb5c8', '#e3d5b8', '#d9a9a0'].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85 })),
+      thatch: new THREE.MeshStandardMaterial({ color: 0x9a8350, roughness: 1 }),
+      wood: new THREE.MeshStandardMaterial({ color: 0x6b4f35, roughness: 0.9 }),
+      glass: new THREE.MeshStandardMaterial({ color: 0x1d2a33, roughness: 0.2, metalness: 0.3 }),
+    };
+  }
+  const P = hutParts;
+  const g = new THREE.Group();
+  for (const [geo, mat] of [[P.deck, P.wood], [P.wall, P.walls[variant % 4]], [P.roof, P.thatch], [P.door, P.wood], [P.win, P.glass]]) {
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = m.receiveShadow = true;
+    g.add(m);
+  }
+  return g;
+}
+
+// a yellow-and-black danger sign next to the big jumps
+let signParts = null;
+function makeDangerSign() {
+  if (!signParts) {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffcc00';
+    ctx.fillRect(0, 0, 256, 128);
+    ctx.fillStyle = '#111';
+    for (let i = -2; i < 10; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * 32, 0);
+      ctx.lineTo(i * 32 + 16, 0);
+      ctx.lineTo(i * 32 + 16 + 24, 22);
+      ctx.lineTo(i * 32 + 24, 22);
+      ctx.fill();
+    }
+    ctx.font = 'italic 900 64px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('JUMP!', 128, 100);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    signParts = {
+      board: new THREE.BoxGeometry(3.2, 1.6, 0.1).translate(0, 3.2, 0),
+      post: new THREE.CylinderGeometry(0.08, 0.08, 3.2, 8).translate(0, 1.6, 0),
+      boardMat: new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.25 }),
+      postMat: new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.6, roughness: 0.4 }),
+    };
+  }
+  const g = new THREE.Group();
+  for (const [geo, mat] of [[signParts.board, signParts.boardMat], [signParts.post, signParts.postMat]]) {
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = true;
+    g.add(m);
+  }
   return g;
 }
 
