@@ -30,8 +30,8 @@ export function createEnvironment(renderer, scene, hdr, quality) {
   const u = sky.material.uniforms;
   u.turbidity.value = 3.2;
   u.rayleigh.value = 1.4;
-  u.mieCoefficient.value = 0.004;
-  u.mieDirectionalG.value = 0.82;
+  u.mieCoefficient.value = 0.0025;
+  u.mieDirectionalG.value = 0.88;
   u.sunPosition.value.copy(sunDir);
   scene.add(sky);
 

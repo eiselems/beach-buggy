@@ -227,8 +227,45 @@ function placeUmbrellas(scene, world) {
     towel.receiveShadow = true;
     g.add(pole, canopy, towel);
     scene.add(g);
-    world.createCollider(RAPIER.ColliderDesc.cylinder(1.2, 0.08).setTranslation(x, y + 1.2, z));
+    smashables.push({ obj: g, radius: 1.3, home: g.position.clone(), homeRot: g.rotation.clone(), vel: new THREE.Vector3(), spin: new THREE.Vector3(), flying: 0 });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Smashables: light things (umbrellas) that fly away when you hit them, and come back later
+const smashables = [];
+function updateSmashables(dt, carPos, carVel) {
+  const speed = Math.hypot(carVel.x, carVel.z);
+  let hits = 0;
+  for (const s of smashables) {
+    const o = s.obj;
+    if (s.flying > 0) {
+      s.flying += dt;
+      s.vel.y -= 9.81 * dt;
+      o.position.addScaledVector(s.vel, dt);
+      o.rotation.x += s.spin.x * dt;
+      o.rotation.z += s.spin.z * dt;
+      const ground = getHeight(o.position.x, o.position.z);
+      if (o.position.y < ground) {
+        o.position.y = ground;
+        s.vel.multiplyScalar(0.3);
+        s.vel.y = Math.abs(s.vel.y) * 0.3;
+        s.spin.multiplyScalar(0.5);
+      }
+      // put it back once the player is gone
+      if (s.flying > 30 && o.position.distanceTo(carPos) > 80) {
+        o.position.copy(s.home);
+        o.rotation.copy(s.homeRot);
+        s.flying = 0;
+      }
+    } else if (speed > 1.5 && Math.hypot(o.position.x - carPos.x, o.position.z - carPos.z) < s.radius + 1.0) {
+      s.flying = 0.001;
+      s.vel.set(carVel.x * 1.1 + (Math.random() - 0.5) * 3, 3 + speed * 0.25, carVel.z * 1.1 + (Math.random() - 0.5) * 3);
+      s.spin.set((Math.random() - 0.5) * 12, 0, (Math.random() - 0.5) * 12);
+      hits++;
+    }
+  }
+  return hits;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +289,7 @@ export class PropSystem {
       const m = part.material;
       if ((m.alphaTest > 0 || m.transparent) && !m.userData.windy) {
         // the fronds sway in the wind and get smooth cut-out edges
-        m.alphaToCoverage = true;
+        m.alphaToCoverage = !quality.postProcessing; // needs MSAA, which the AO pass does not use
         m.side = THREE.DoubleSide;
         addWind(m, 0.18, 6);
         m.userData.windy = true;
@@ -262,11 +299,12 @@ export class PropSystem {
     const grass = assets.grass[0];
     const nrm = grass.geometry.attributes.normal;
     for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0);
-    grass.material.color.setRGB(1.15, 1.05, 0.85);
+    grass.material.color.setRGB(1.0, 0.9, 0.7);
+    grass.material.metalness = 0; // the model ships as 'metal', which glows white against the sun
     grass.material.transparent = false; // cut-out instead of blending: no sorting needed
     grass.material.depthWrite = true;
     grass.material.alphaTest = 0.35;
-    grass.material.alphaToCoverage = true;
+    grass.material.alphaToCoverage = !quality.postProcessing;
     grass.material.side = THREE.DoubleSide;
     addWind(grass.material, 0.12, 0.8);
 
@@ -374,8 +412,9 @@ export class PropSystem {
     if (this.boost) this.boost.removeTile(t.key);
   }
 
-  update(time, camera, focus) {
+  update(time, camera, focus, dt = 0, carVel = null) {
     wind.value = time;
+    this.smashed = carVel ? updateSmashables(dt, focus, carVel) : 0;
     this.frame++;
     const Q = this.quality;
     const reach = Q.propDistance + TILE;

@@ -319,7 +319,7 @@ export function emitWheelEffects(particles, vehicle, forward, dt, time) {
     const dry = ground > 0.6;
     const slip = st.slip[i];
     // fine dust clouds
-    let rate = (speed * 0.5 + slip * 2.5) * dt * (dry ? 1 : 0.35);
+    let rate = (speed * 0.5 + Math.min(slip, 3) * 2.5) * dt * (dry ? 1 : 0.35);
     if (Math.random() < rate - Math.floor(rate)) rate += 1;
     for (let k = 0; k < Math.floor(rate); k++) {
       particles.emit(

@@ -8,24 +8,31 @@ import { BOOST } from './boost.js';
 // Tune the handling here!
 export const TUNING = {
   mass: 520,                 // kg
-  engineForce: 5200,         // N, total
+  engineForce: 5600,         // N, total
   frontDrive: 0.3,           // share of power sent to the front wheels (0 = rear-wheel drive)
-  maxSpeed: 32,              // m/s (~115 km/h)
+  maxSpeed: 39,              // m/s (~140 km/h)
   reverseForce: 2400,
   brake: 9,                  // per wheel
-  handbrake: 20,
+  handbrake: 4,
   maxSteer: 0.62,            // radians
   steerSpeed: 6,
-  suspensionRest: 0.5,
-  suspensionStiffness: 21,
-  suspensionCompression: 3.4,
-  suspensionRelaxation: 2.6,
-  maxTravel: 0.42,
+  suspensionRest: 0.75,
+  suspensionStiffness: 11,       // soft, long-travel buggy springs: wheels stay on the sand over bumps
+  suspensionCompression: 4.2,
+  suspensionRelaxation: 3.6,
+  maxTravel: 0.62,
   groundClearance: 0.4,     // m between the sand and the bottom of the body
-  gripDrySand: 1.9,
-  gripWetSand: 2.6,
-  gripDrift: 1.05,
-  antiRoll: 7000,
+  gripDrySand: 1.1,         // soft dry sand: about 0.8 g in corners
+  gripWetSand: 1.4,         // firm wet sand near the water grips better
+  gripDrift: 0.5,           // rear grip with the handbrake pulled (fraction of normal grip)
+  gripSliding: 0.8,         // rear grip while you hold a drift (fraction; keeps slides going instead of snapping back)
+  antiRoll: 9000,
+  steerReturn: 11,          // how fast the wheels straighten when you let go
+  countersteer: 0.75,       // automatic countersteer in slides (Forza-style steering assist)
+  yawDamping: 2.2,          // keeps the buggy straight when you are not steering
+  downforce: 0.4,           // N per (m/s)^2: presses the buggy onto bumps at speed
+  maxDriftAngle: 0.6,       // radians (~40°): drift assist stops slides going further than this
+  driftAssist: 40,          // how hard it pulls back (rad/s² per radian over the limit)
 };
 
 const UP = { x: 0, y: -1, z: 0 };
@@ -102,11 +109,13 @@ export class Vehicle {
       this.controller.setWheelMaxSuspensionTravel(i, T.maxTravel);
       this.controller.setWheelMaxSuspensionForce(i, 30000);
       this.controller.setWheelFrictionSlip(i, T.gripDrySand);
-      this.controller.setWheelSideFrictionStiffness(i, 1.0);
+      // the rear lets go a little earlier than the front, so the buggy can be steered with the throttle
+      this.controller.setWheelSideFrictionStiffness(i, w.front ? 0.85 : 0.7);
     });
 
     this.steer = 0;
     this.speed = 0;
+    this.grip = WHEELS.map(() => T.gripDrySand);
     this.time = 0;
     this.state = {
       suspension: WHEELS.map(() => T.suspensionRest),
@@ -134,16 +143,27 @@ export class Vehicle {
     const speed = lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z;
     this.speed = speed;
 
-    // --- steering (less at high speed so it stays controllable)
+    // sideways speed (positive = sliding to the left) and the slip angle between heading and travel
+    const left = rotateByQuat({ x: 1, y: 0, z: 0 }, body.rotation());
+    const lateral = lv.x * left.x + lv.y * left.y + lv.z * left.z;
+    const flatSpeed = Math.hypot(lateral, speed);
+    const slipAngle = flatSpeed > 4 && speed > -1 ? Math.atan2(lateral, Math.max(speed, 0.1)) : 0;
+    this.slipAngle = slipAngle;
+
+    // --- steering (less at high speed so it stays controllable), plus automatic countersteer:
+    // the front wheels lean towards where the buggy is actually going, like Forza's steering assist
     const steerLimit = T.maxSteer / (1 + (speed * speed) / 500);
-    const target = input.steer * steerLimit;
-    this.steer += (target - this.steer) * Math.min(1, dt * T.steerSpeed);
+    let target = input.steer * steerLimit;
+    if (speed > 4) target += T.countersteer * slipAngle;
+    target = Math.max(-T.maxSteer, Math.min(T.maxSteer, target));
+    const rate = Math.abs(target) < Math.abs(this.steer) ? T.steerReturn : T.steerSpeed;
+    this.steer += (target - this.steer) * Math.min(1, dt * rate);
 
     // --- throttle and brakes
     const pos = body.translation();
     const groundH = getHeight(pos.x, pos.z);
     const waterDepth = Math.max(0, swashAt(pos.x, this.time) - groundH);
-    const waterFactor = 1 / (1 + waterDepth * 1.2);
+    const waterFactor = 1 / (1 + waterDepth * 0.5);
 
     let drive = 0;
     let brake = 0;
@@ -152,7 +172,8 @@ export class Vehicle {
       if (speed < -1) brake = T.brake * pedal;
       else {
         const s = Math.max(0, speed) / T.maxSpeed;
-        drive = T.engineForce * pedal * Math.max(0, 1 - s * s);
+        // flat torque most of the way, fading out near top speed
+        drive = T.engineForce * pedal * Math.max(0, 1 - Math.pow(s, 4));
       }
     } else if (pedal < -0.05) {
       if (speed > 1) brake = T.brake * -pedal;
@@ -172,18 +193,28 @@ export class Vehicle {
       const w = WHEELS[i];
       c.setWheelSteering(i, w.front ? this.steer : 0);
       const share = w.front ? T.frontDrive : 1 - T.frontDrive;
-      c.setWheelEngineForce(i, (drive * share) / 2);
+      // handbrake locks the rear wheels (Rapier ignores the brake while a wheel has engine force)
+      const locked = input.handbrake && !w.front;
+      c.setWheelEngineForce(i, locked ? 0 : (drive * share) / 2);
       let b = brake;
-      if (input.handbrake && !w.front) b = Math.max(b, T.handbrake);
+      if (locked) b = Math.max(b, T.handbrake);
       c.setWheelBrake(i, b);
 
-      // grip depends on the surface: firm wet sand grips better than soft dry sand
+      // grip depends on the surface: firm wet sand grips better than soft dry sand (blended smoothly,
+      // so wheels don't flip between two grip levels along the waterline)
       const cp = this.state.contactPoint[i];
       const h = getHeight(cp.x, cp.z);
-      let grip = h < 0.9 ? T.gripWetSand : T.gripDrySand;
-      if (input.handbrake && !w.front) grip = T.gripDrift;
-      if (h < swashAt(cp.x, this.time) - 0.1) grip *= 0.8;
-      c.setWheelFrictionSlip(i, grip);
+      const wet = Math.min(1, Math.max(0, (1.5 - h) / 1.0));
+      let grip = T.gripDrySand + (T.gripWetSand - T.gripDrySand) * wet;
+      const under = swashAt(cp.x, this.time) - h;
+      if (under > 0) grip *= 1 - 0.2 * Math.min(1, under * 3);
+      if (!w.front) {
+        if (input.handbrake) grip *= T.gripDrift;
+        else if (Math.abs(slipAngle) > 0.3 && input.throttle > 0.5) grip *= T.gripSliding;
+      }
+      // ease grip changes in over ~0.2 s so pulling the handbrake starts a slide instead of a snap spin
+      this.grip[i] += (grip - this.grip[i]) * Math.min(1, dt * 5);
+      c.setWheelFrictionSlip(i, this.grip[i]);
     }
 
     // --- anti-roll bars
@@ -208,9 +239,29 @@ export class Vehicle {
       const soft = groundH > 0.9 ? 1.5 : 1.0;
       const rolling = contacts > 0 ? 0.035 * T.mass * 9.81 * soft : 0;
       const aero = 0.45 * vlen * vlen;
-      const water = waterDepth > 0.05 ? T.mass * 1.8 * Math.min(waterDepth, 1.2) * vlen : 0;
+      const water = waterDepth > 0.05 ? T.mass * 0.7 * Math.min(waterDepth, 1.2) * vlen : 0;
       const f = Math.min((rolling + aero + water) * dt, T.mass * vlen * 0.9);
       body.applyImpulse({ x: (-vel.x / vlen) * f, y: (-vel.y / vlen) * f * 0.3, z: (-vel.z / vlen) * f }, true);
+    }
+
+    // --- stability: damp spinning when the player isn't asking for it, and downforce at speed
+    if (contacts > 0) {
+      const av = body.angvel();
+      const up = rotateByQuat({ x: 0, y: 1, z: 0 }, body.rotation());
+      const yawRate = av.x * up.x + av.y * up.y + av.z * up.z;
+      const asked = Math.abs(input.steer) > 0.1 || input.handbrake;
+      const k = (asked ? 0.25 : 1) * T.yawDamping * Math.min(1, Math.abs(speed) / 8);
+      const inertia = 600;
+      const imp = -yawRate * inertia * k * dt;
+      body.applyTorqueImpulse({ x: up.x * imp, y: up.y * imp, z: up.z * imp }, true);
+      // drift assist: if the slide gets too wide, gently rotate the buggy back towards its direction of travel
+      const excess = Math.abs(slipAngle) - T.maxDriftAngle;
+      if (excess > 0) {
+        const a = Math.sign(slipAngle) * Math.min(excess, 0.6) * T.driftAssist * inertia * dt;
+        body.applyTorqueImpulse({ x: up.x * a, y: up.y * a, z: up.z * a }, true);
+      }
+      const down = T.downforce * speed * speed * dt * (contacts / 4);
+      body.applyImpulse({ x: -up.x * down, y: -up.y * down, z: -up.z * down }, true);
     }
 
     // --- a little air control for jumps

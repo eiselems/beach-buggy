@@ -172,6 +172,23 @@ export class GameAudio {
     this.boostGain.connect(this.master);
   }
 
+  // a thud when the buggy lands from a jump
+  thump(strength) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.25);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(Math.min(0.6, strength * 0.08), t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    o.connect(g);
+    g.connect(this.master);
+    o.start(t);
+    o.stop(t + 0.4);
+  }
+
   // a little chime when you pick up boost
   pickup(big) {
     if (!this.ctx) return;

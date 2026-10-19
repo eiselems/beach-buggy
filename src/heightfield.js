@@ -63,8 +63,10 @@ export function terrainFunction(x, z) {
     const duneAmp = 0.55 + 0.9 * smoothstep(-0.4, 0.6, nE(x * 0.0007, 3.7));
     const duneMask = smoothstep(55, 125, u) * (1 - 0.5 * smoothstep(260, 340, u));
     if (duneMask > 0) {
-      const ridge = 1 - Math.abs(nA(x * 0.006, u * 0.011));
-      h += duneMask * duneAmp * (ridge * ridge * 8 + fbm(nB, x * 0.012, z * 0.012, 3) * 2.5);
+      // rounded crests (a plain abs() makes knife-edge ridges that launch the buggy into the air)
+      const n = nA(x * 0.006, u * 0.011);
+      const ridge = 1.2 - Math.sqrt(n * n + 0.06);
+      h += duneMask * duneAmp * (ridge * ridge * 7 + fbm(nB, x * 0.012, z * 0.012, 3) * 2.5);
     }
     // grassy hills further inland
     const hills = smoothstep(220, 480, u);
@@ -77,7 +79,7 @@ export function terrainFunction(x, z) {
       h += mtn * (150 * r * r * r + 30 * fbm(nB, x * 0.003, z * 0.003, 3));
     }
     // small bumps you feel while driving
-    h += 0.12 * nC(x * 0.15, z * 0.15) * smoothstep(-2, 8, u);
+    h += 0.07 * nC(x * 0.06, z * 0.06) * smoothstep(-2, 8, u);
   }
   // rocky headlands
   const head = headlandAt(x) * smoothstep(300, 60, d);

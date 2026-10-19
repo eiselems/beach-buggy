@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { N8AOPass } from 'n8ao';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
@@ -31,6 +32,7 @@ import { loadBuggy, BUGGY_CREDIT } from './buggy.js';
 import { Vehicle } from './vehicle.js';
 import { PropSystem, SPAWN } from './props.js';
 import { BoostSystem, ExhaustFlames } from './boost.js';
+import { Skills } from './skills.js';
 import { TireTracks, Particles, emitWheelEffects } from './effects.js';
 import { GameAudio } from './audio.js';
 import { Input } from './input.js';
@@ -107,7 +109,7 @@ async function main() {
   const particles = new Particles(scene, QUALITY.particles);
   const audio = new GameAudio();
   const input = new Input();
-  const rig = new CameraRig(camera, renderer.domElement);
+  const rig = new CameraRig(camera, renderer.domElement, { world, RAPIER, body: vehicle.body });
 
   // --- post-processing (high quality only): anti-aliasing (MSAA), a soft glow on bright highlights
   let composer = null, bloom = null;
@@ -115,7 +117,16 @@ async function main() {
     const pr = renderer.getPixelRatio();
     const rt = new THREE.WebGLRenderTarget(window.innerWidth * pr, window.innerHeight * pr, { type: THREE.HalfFloatType, samples: 4 });
     composer = new EffectComposer(renderer, rt);
-    composer.addPass(new RenderPass(scene, camera));
+    // ambient occlusion: soft contact shadows where things meet the sand (under the buggy, rocks, palms)
+    const useAO = new URLSearchParams(location.search).get('ao') !== '0';
+    const ao = new N8AOPass(scene, camera, window.innerWidth, window.innerHeight);
+    ao.configuration.aoRadius = 1.6;
+    ao.configuration.distanceFalloff = 0.6;
+    ao.configuration.intensity = 2.2;
+    ao.configuration.halfRes = true;
+    ao.configuration.gammaCorrection = false;
+    ao.setQualityMode('Medium');
+    composer.addPass(useAO ? ao : new RenderPass(scene, camera));
     composer.addPass(new ShaderPass(SanitizeShader));
     bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.12, 0.3, 7.0);
     composer.addPass(bloom);
@@ -163,6 +174,8 @@ async function main() {
   // --- HUD
   const hud = { speed: $('speed'), gear: $('gear'), toast: $('toast'), needle: $('needle'), boost: $('boost'), boostNum: $('boost-num'), speedlines: $('speedlines') };
   let toastTimer = 0;
+  const skills = new Skills({ chain: $('chain'), chainScore: $('chain-score'), chainMult: $('chain-mult'), chainBar: $('chain-bar'), feed: $('feed'), total: $('total') });
+  let lastKmh = 0, wasAirborne = false, fallSpeed = 0;
   function toast(text) {
     hud.toast.textContent = text;
     hud.toast.classList.add('show');
@@ -279,13 +292,21 @@ async function main() {
     }
 
     // too deep in the sea: put the buggy back on the beach
-    deepTime = vehicle.state.inWater > 1.6 ? deepTime + dt : 0;
-    if (deepTime > 1.2) {
+    deepTime = vehicle.state.inWater > 1.1 ? deepTime + dt : 0;
+    if (deepTime > 0.6) {
       const x = bp.x;
       vehicle.place(x, shoreZ(x) - 22, Math.atan2(bv.x, bv.z) > 0 ? Math.PI / 2 : -Math.PI / 2);
       toast('Too deep! Back to the beach');
       deepTime = 0;
     }
+
+    // landings and crashes
+    if (vehicle.state.airborne) fallSpeed = -bv.y;
+    else if (wasAirborne && fallSpeed > 3) audio.thump(fallSpeed);
+    wasAirborne = vehicle.state.airborne;
+    const kmhNow = Math.abs(vehicle.speed) * 3.6;
+    const crashed = lastKmh - kmhNow > 25 * dt * 60 * 0.2 && lastKmh > 40 && controls.brake < 0.1 && !controls.handbrake;
+    lastKmh = kmhNow;
 
     // flipped over? offer a reset
     upsideDownTime = vehicle.state.upsideDown && Math.abs(vehicle.speed) < 2 ? upsideDownTime + dt : 0;
@@ -295,12 +316,13 @@ async function main() {
     }
 
     const lv = vehicle.body.linvel();
-    rig.update(dt, buggy.root.position, buggy.root.quaternion, lv, Math.abs(vehicle.speed), boostPower);
+    rig.update(dt, buggy.root.position, buggy.root.quaternion, lv, Math.abs(vehicle.speed), boostPower, vehicle.state.airborne);
     env.update(buggy.root.position);
     ocean.update(time, camera.position);
     terrain.update(camera.position);
-    props.update(time, camera, buggy.root.position);
+    props.update(time, camera, buggy.root.position, dt, lv);
 
+    skills.update(dt, vehicle, { smashed: props.smashed, crashed: crashed || controls.reset });
     const slip = vehicle.state.slip.reduce((a, b) => a + b, 0) / 4;
     audio.update(dt, {
       speed: vehicle.speed,
