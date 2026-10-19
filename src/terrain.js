@@ -424,7 +424,8 @@ export function createSandMaterial(sand, detail) {
           // two sizes of the grass texture, blended by large noise, so it doesn't look like a checkerboard
           vec3 g1 = texture2D( tGrassD, vMapUv * 0.35 ).rgb;
           vec3 g2 = texture2D( tGrassD, ROT * ( vMapUv * 0.083 ) + 0.31 ).rgb;
-          vec3 gDet = mix( g1, g2, smoothstep( 0.25, 0.75, macro2 ) ) / uGrassAvg;
+          // brightness only: the photo has grey-blue rocks in it, the hue comes from the vertex colours
+          vec3 gDet = vec3( dot( mix( g1, g2, smoothstep( 0.25, 0.75, macro2 ) ) / uGrassAvg, vec3( 0.3, 0.55, 0.15 ) ) );
           det = mix( det, mix( gDet, vec3( 1.0 ), 0.25 ), grassy );
         }
         if ( rocky > 0.01 ) det = mix( det, triplanar( tRockD, vWPos, normalize( vWNormal ), 0.14 ) / uRockAvg, rocky );
