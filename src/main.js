@@ -25,6 +25,32 @@ const SanitizeShader = {
 
 import { WorkerPool, TerrainLOD, PhysicsTerrain, createSandMaterial, getHeight, shoreZ } from './terrain.js';
 import { createEnvironment } from './environment.js';
+
+// Final touch after tone mapping: a little extra colour and contrast, a soft vignette,
+// and a radial blur at the screen edges when you go really fast (speed sensation).
+const FinishShader = {
+  uniforms: { tDiffuse: { value: null }, uBlur: { value: 0 } },
+  vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uBlur;
+    varying vec2 vUv;
+    void main() {
+      vec2 d = vUv - 0.5;
+      float edge = smoothstep(0.15, 0.75, length(d * vec2(1.6, 1.0)));
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      if (uBlur > 0.001) {
+        vec3 acc = c;
+        for (int i = 1; i < 8; i++) acc += texture2D(tDiffuse, vUv - d * float(i) * 0.012 * uBlur * edge).rgb;
+        c = acc / 8.0;
+      }
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = mix(vec3(l), c, 1.12);                 // saturation
+      c = (c - 0.5) * 1.05 + 0.5;                // contrast
+      c *= 1.0 - 0.28 * edge * edge;             // vignette
+      gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+    }`,
+};
 import { loadAssets } from './assets.js';
 import { QUALITY } from './quality.js';
 import { createOcean } from './ocean.js';
@@ -112,7 +138,7 @@ async function main() {
   const rig = new CameraRig(camera, renderer.domElement, { world, RAPIER, body: vehicle.body });
 
   // --- post-processing (high quality only): anti-aliasing (MSAA), a soft glow on bright highlights
-  let composer = null, bloom = null;
+  let composer = null, bloom = null, finish = null;
   if (QUALITY.postProcessing) {
     const pr = renderer.getPixelRatio();
     const rt = new THREE.WebGLRenderTarget(window.innerWidth * pr, window.innerHeight * pr, { type: THREE.HalfFloatType, samples: 4 });
@@ -131,6 +157,8 @@ async function main() {
     bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.12, 0.3, 7.0);
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
+    finish = new ShaderPass(FinishShader);
+    composer.addPass(finish);
   }
 
   function resize() {
@@ -354,6 +382,10 @@ async function main() {
       if (toastTimer <= 0) hud.toast.classList.remove('show');
     }
 
+    if (finish) {
+      const fast = Math.max(boostPower, Math.min(1, Math.max(0, (Math.abs(vehicle.speed) - 30) / 15)));
+      finish.uniforms.uBlur.value += (fast - finish.uniforms.uBlur.value) * Math.min(1, dt * 4);
+    }
     if (composer) composer.render();
     else renderer.render(scene, camera);
     adaptResolution(dt);
