@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Beach Buggy</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏖️</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="loading" class="screen">
+      <h1>Beach Buggy</h1>
+      <p id="loading-text">Loading…</p>
+    </div>
+
+    <div id="start" class="screen hidden">
+      <h1>Beach Buggy</h1>
+      <p class="tagline">Click to drive</p>
+      <div class="controls">
+        <div><kbd>W</kbd> <kbd>↑</kbd> Gas</div>
+        <div><kbd>S</kbd> <kbd>↓</kbd> Brake / reverse</div>
+        <div><kbd>A</kbd> <kbd>D</kbd> <kbd>←</kbd> <kbd>→</kbd> Steer</div>
+        <div><kbd>Space</kbd> Handbrake (drift!)</div>
+        <div><kbd>C</kbd> Change camera</div>
+        <div><kbd>R</kbd> Reset buggy</div>
+        <div><kbd>H</kbd> Horn &nbsp; <kbd>M</kbd> Mute</div>
+        <div>Drag the mouse to look around</div>
+      </div>
+      <p class="hint">Gamepad works too: triggers to drive, left stick to steer. On a phone, use the on-screen controls.</p>
+      <p id="credits" class="credits"></p>
+    </div>
+
+    <div id="hud" class="hidden">
+      <div id="gauge">
+        <div id="dial"><div id="needle"></div></div>
+        <div id="speed">0</div>
+        <div id="unit">km/h</div>
+        <div id="gear">1</div>
+      </div>
+      <div id="toast"></div>
+      <div id="fps"></div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

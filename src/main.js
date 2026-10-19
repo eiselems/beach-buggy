@@ -1,0 +1,292 @@
+import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+// Replaces any NaN/Infinity pixel before the bloom pass. Without this, one broken pixel
+// gets blurred over the whole screen by the bloom and the frame flashes black.
+const SanitizeShader = {
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      bvec4 bad = equal(floatBitsToUint(c) & 0x7f800000u, uvec4(0x7f800000u));
+      if (any(bad)) c = vec4(0.0, 0.0, 0.0, 1.0);
+      gl_FragColor = min(c, vec4(500.0));
+    }`,
+};
+
+import { createTerrainMesh, createPhysicsMeshData, createHeightTexture, shoreZ } from './terrain.js';
+import { createEnvironment } from './environment.js';
+import { loadAssets } from './assets.js';
+import { QUALITY } from './quality.js';
+import { createOcean } from './ocean.js';
+import { loadBuggy, BUGGY_CREDIT } from './buggy.js';
+import { Vehicle } from './vehicle.js';
+import { createProps } from './props.js';
+import { TireTracks, Particles, emitWheelEffects } from './effects.js';
+import { GameAudio } from './audio.js';
+import { Input } from './input.js';
+import { CameraRig } from './camera.js';
+
+const $ = (id) => document.getElementById(id);
+const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+async function step(label, fn) {
+  $('loading-text').textContent = label;
+  await nextFrame();
+  return fn();
+}
+
+async function main() {
+  await step('Starting physics…', () => RAPIER.init());
+
+  // --- renderer
+  // with post-processing the composer does the anti-aliasing; without it, the GPU's built-in MSAA
+  // (almost free on phone GPUs) does
+  const renderer = new THREE.WebGLRenderer({ antialias: !QUALITY.postProcessing, powerPreference: 'high-performance' });
+  const maxPixelRatio = Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio);
+  let pixelRatio = QUALITY.postProcessing ? maxPixelRatio : Math.min(1, maxPixelRatio);
+  renderer.setPixelRatio(pixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.5;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  $('app').appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.15, 12000);
+
+  $('loading-text').textContent = 'Loading sand, rocks and sky… 0%';
+  const assets = await loadAssets(renderer, (f) => ($('loading-text').textContent = `Loading sand, rocks and sky… ${Math.round(f * 100)}%`));
+
+  const env = await step('Painting the sky…', () => createEnvironment(renderer, scene, assets.hdr, QUALITY));
+
+  const terrain = await step('Shaping the beach…', () => createTerrainMesh(assets.sand, QUALITY));
+  scene.add(terrain);
+
+  const HEIGHT_RES = 1024;
+  const ocean = await step('Filling the ocean…', () =>
+    createOcean({ heightTexture: createHeightTexture(HEIGHT_RES), heightRes: HEIGHT_RES, envMap: env.envCube, sunDir: env.sunDir, sunColor: env.sunColor, normalTexture: assets.waterNormals, segments: QUALITY.oceanSegments })
+  );
+  scene.add(ocean);
+
+  // --- physics world
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  world.timestep = 1 / 120;
+  await step('Packing the sand…', () => {
+    const { vertices, indices } = createPhysicsMeshData();
+    world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices).setFriction(0.8));
+  });
+
+  const props = await step('Planting palm trees…', () => createProps(scene, world, assets, QUALITY));
+
+  const buggy = await step('Fueling up the buggy…', () => loadBuggy());
+  scene.add(buggy.root);
+  const start = { x: props.spawn.x, z: props.spawn.z, yaw: Math.PI / 2 };
+  const vehicle = new Vehicle(world, start.x, start.z, start.yaw, buggy);
+
+  const tracks = new TireTracks(scene);
+  const particles = new Particles(scene, QUALITY.particles);
+  const audio = new GameAudio();
+  const input = new Input();
+  const rig = new CameraRig(camera, renderer.domElement);
+
+  // --- post-processing (high quality only): anti-aliasing (MSAA), a soft glow on bright highlights
+  let composer = null, bloom = null;
+  if (QUALITY.postProcessing) {
+    const pr = renderer.getPixelRatio();
+    const rt = new THREE.WebGLRenderTarget(window.innerWidth * pr, window.innerHeight * pr, { type: THREE.HalfFloatType, samples: 4 });
+    composer = new EffectComposer(renderer, rt);
+    composer.addPass(new RenderPass(scene, camera));
+    composer.addPass(new ShaderPass(SanitizeShader));
+    bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.12, 0.3, 7.0);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
+  }
+
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(w, h);
+    if (composer) {
+      composer.setPixelRatio(pixelRatio);
+      composer.setSize(w, h);
+    }
+    particles.setViewport(h * renderer.getPixelRatio(), camera.fov);
+  }
+
+  // Dynamic resolution: if the frame rate drops, render fewer pixels; if there's headroom, more.
+  let perfFrames = 0, perfTime = 0, perfCooldown = 3;
+  function adaptResolution(dt) {
+    perfFrames++;
+    perfTime += dt;
+    if (perfTime < 1) return;
+    const fps = perfFrames / perfTime;
+    $('fps').textContent = `${Math.round(fps)} fps · ${QUALITY.name} · ${Math.round(pixelRatio * 100)}% res`;
+    perfFrames = 0;
+    perfTime = 0;
+    if (perfCooldown > 0) return void perfCooldown--; // skip the first seconds (shader warm-up)
+    let next = pixelRatio;
+    if (fps < 45) next = Math.max(0.5, pixelRatio * 0.85);
+    else if (fps > 57) next = Math.min(maxPixelRatio, pixelRatio + 0.05);
+    if (Math.abs(next - pixelRatio) > 0.01) {
+      pixelRatio = next;
+      resize();
+    }
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // Compile shaders up front so the first frames do not stutter
+  await step('Warming up…', () => renderer.compile(scene, camera));
+
+  // --- HUD
+  const hud = { speed: $('speed'), gear: $('gear'), toast: $('toast'), needle: $('needle') };
+  let toastTimer = 0;
+  function toast(text) {
+    hud.toast.textContent = text;
+    hud.toast.classList.add('show');
+    toastTimer = 2.2;
+  }
+
+  $('credits').innerHTML = `Buggy: <a href="${BUGGY_CREDIT.url}" target="_blank">${BUGGY_CREDIT.title}</a> by ${BUGGY_CREDIT.author} (${BUGGY_CREDIT.license}) · Palms: <a href="https://sketchfab.com/3d-models/coconut-palm-26e787f2ff2e4c0fb004c3b0210805a3" target="_blank">Coconut Palm</a> by evolveduk · Grass: <a href="https://sketchfab.com/3d-models/dry-grass-d1484537470441b999d37077aeb9b47a" target="_blank">Dry grass</a> by Pixel-bit (CC-BY 4.0) · Sand, rocks &amp; sky: <a href="https://polyhaven.com" target="_blank">Poly Haven</a> (CC0)`;
+  $('loading').classList.add('hidden');
+  $('start').classList.remove('hidden');
+  let running = false;
+  const begin = () => {
+    if (running) return;
+    running = true;
+    audio.start();
+    $('start').classList.add('hidden');
+    $('hud').classList.remove('hidden');
+  };
+  $('start').addEventListener('click', begin);
+  if (new URLSearchParams(location.search).has('autostart')) begin();
+  window.addEventListener('keydown', (e) => {
+    if (!running && (e.code === 'Enter' || e.code === 'Space')) begin();
+  });
+
+  // --- main loop
+  const timer = new THREE.Timer();
+  const DT = world.timestep;
+  let acc = 0;
+  let time = 0;
+  let upsideDownTime = 0;
+  const prevPos = new THREE.Vector3(), curPos = new THREE.Vector3();
+  const prevRot = new THREE.Quaternion(), curRot = new THREE.Quaternion();
+  const right = new THREE.Vector3(), forward = new THREE.Vector3();
+  const copyBody = (p, q) => {
+    const t = vehicle.body.translation(), r = vehicle.body.rotation();
+    p.set(t.x, t.y, t.z);
+    q.set(r.x, r.y, r.z, r.w);
+  };
+  copyBody(curPos, curRot);
+  prevPos.copy(curPos);
+  prevRot.copy(curRot);
+
+  // let the buggy settle on its suspension before the player sees it
+  for (let i = 0; i < 120; i++) {
+    vehicle.step(DT, { throttle: 0, brake: 0, steer: 0, handbrake: false });
+    world.step();
+  }
+  copyBody(curPos, curRot);
+  prevPos.copy(curPos);
+  prevRot.copy(curRot);
+
+  function frame() {
+    timer.update();
+    const dt = Math.min(timer.getDelta(), 0.1);
+    time += dt;
+    const controls = running ? input.read() : { throttle: 0, brake: 0, steer: 0, handbrake: false };
+
+    if (controls.reset) {
+      vehicle.reset();
+      toast('Reset!');
+    }
+    if (controls.camera) toast(rig.next());
+    if (controls.mute) toast(audio.toggleMute() ? 'Sound off' : 'Sound on');
+
+    // fixed-step physics for stable driving
+    acc += dt;
+    let steps = 0;
+    while (acc >= DT && steps < 10) {
+      copyBody(prevPos, prevRot);
+      vehicle.step(DT, controls);
+      world.step();
+      acc -= DT;
+      steps++;
+    }
+    copyBody(curPos, curRot);
+    const alpha = acc / DT;
+    buggy.root.position.lerpVectors(prevPos, curPos, alpha);
+    buggy.root.quaternion.slerpQuaternions(prevRot, curRot, alpha);
+    buggy.update(vehicle.state, time, Math.abs(vehicle.speed));
+    buggy.setHelmetCam(rig.mode === 2);
+
+    // effects
+    right.set(1, 0, 0).applyQuaternion(buggy.root.quaternion);
+    forward.set(0, 0, 1).applyQuaternion(buggy.root.quaternion);
+    for (let i = 0; i < 4; i++) tracks.add(i, vehicle.state.contact[i], vehicle.state.contactPoint[i], right, vehicle.wheels[i].width * 0.9);
+    tracks.update(dt);
+    emitWheelEffects(particles, vehicle, forward, dt, time);
+    particles.update(dt);
+
+    // flipped over? offer a reset
+    upsideDownTime = vehicle.state.upsideDown && Math.abs(vehicle.speed) < 2 ? upsideDownTime + dt : 0;
+    if (upsideDownTime > 2) {
+      toast('Upside down! Press R to flip back');
+      upsideDownTime = -3;
+    }
+
+    const lv = vehicle.body.linvel();
+    rig.update(dt, buggy.root.position, buggy.root.quaternion, lv, Math.abs(vehicle.speed));
+    env.update(buggy.root.position);
+    ocean.update(time);
+    props.update(time, camera.position);
+
+    const slip = vehicle.state.slip.reduce((a, b) => a + b, 0) / 4;
+    audio.update(dt, {
+      speed: vehicle.speed,
+      throttle: Math.max(controls.throttle, controls.brake * (vehicle.speed < 1 ? 1 : 0)),
+      slip,
+      airborne: vehicle.state.airborne,
+      shoreDistance: Math.abs(camera.position.z - shoreZ(camera.position.x)),
+      water: vehicle.state.inWater,
+      horn: controls.horn,
+      time,
+    });
+
+    // HUD
+    const kmh = Math.abs(vehicle.speed) * 3.6;
+    hud.speed.textContent = Math.round(kmh);
+    hud.gear.textContent = vehicle.speed < -0.5 ? 'R' : audio.gear;
+    hud.needle.style.transform = `rotate(${-120 + Math.min(audio.rpm / 7000, 1) * 240}deg)`;
+    if (toastTimer > 0) {
+      toastTimer -= dt;
+      if (toastTimer <= 0) hud.toast.classList.remove('show');
+    }
+
+    if (composer) composer.render();
+    else renderer.render(scene, camera);
+    adaptResolution(dt);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // handy for experimenting in the browser console
+  window.game = { scene, camera, renderer, composer, bloom, vehicle, buggy, rig, world, tracks, RAPIER, QUALITY, getPixelRatio: () => pixelRatio };
+}
+
+main().catch((err) => {
+  console.error(err);
+  $('loading-text').textContent = 'Something went wrong: ' + err.message;
+});
