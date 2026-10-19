@@ -37,11 +37,11 @@ const FinishShader = {
     varying vec2 vUv;
     void main() {
       vec2 d = vUv - 0.5;
-      float edge = smoothstep(0.15, 0.75, length(d * vec2(1.6, 1.0)));
+      float edge = smoothstep(0.35, 0.85, length(d * vec2(1.6, 1.0)));
       vec3 c = texture2D(tDiffuse, vUv).rgb;
       if (uBlur > 0.001) {
         vec3 acc = c;
-        for (int i = 1; i < 8; i++) acc += texture2D(tDiffuse, vUv - d * float(i) * 0.012 * uBlur * edge).rgb;
+        for (int i = 1; i < 8; i++) acc += texture2D(tDiffuse, vUv - d * float(i) * 0.008 * uBlur * edge).rgb;
         c = acc / 8.0;
       }
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -111,6 +111,7 @@ async function main() {
   const terrain = new TerrainLOD(scene, createSandMaterial(assets.sand, QUALITY.sandDetail), pool, QUALITY);
   const physTerrain = new PhysicsTerrain(world, pool);
   const boost = new BoostSystem(scene, getHeight);
+  boost.camera = camera;
   const props = new PropSystem(scene, world, pool, assets, QUALITY, boost);
   const grassField = new GrassField(scene, QUALITY, wind);
 
@@ -382,6 +383,8 @@ async function main() {
     deepTime = vehicle.state.inWater > 1.1 ? deepTime + dt : 0;
     if (deepTime > 0.6) {
       vehicle.place(safeSpot.x, safeSpot.y, safeSpot.z);
+      $('fade').classList.add('on');
+      setTimeout(() => $('fade').classList.remove('on'), 350);
       toast('Too deep! Back to the beach');
       deepTime = 0;
     }

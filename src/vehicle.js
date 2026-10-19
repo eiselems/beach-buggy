@@ -187,7 +187,9 @@ export class Vehicle {
       else {
         const s = Math.max(0, speed) / T.maxSpeed;
         // flat torque most of the way, fading out near top speed
-        drive = T.engineForce * pedal * Math.max(0, 1 - Math.pow(s, 4));
+        // flat torque most of the way, fading out near top speed; above it (after a boost) a little
+        // push remains so the buggy coasts down gently instead of slamming into a wall of drag
+        drive = T.engineForce * pedal * Math.max(0.1, 1 - Math.pow(s, 4));
       }
     } else if (pedal < -0.05) {
       if (speed > 1) brake = T.brake * -pedal;
@@ -303,8 +305,9 @@ export class Vehicle {
       }
       // grip limit: outside a drift, don't let the buggy rotate faster than its tyres could turn it
       // (so full lock at top speed carves a curve instead of spinning)
-      if (!driftHeld && !input.handbrake && Math.abs(speed) > 15) {
-        const maxYaw = (1.25 * 9.81) / Math.abs(speed);
+      if (!driftHeld && !input.handbrake && Math.abs(speed) > 22) {
+        // (only at high speed, and it scales with how much you steer, so half lock still turns less than full lock)
+        const maxYaw = ((1.3 * 9.81) / Math.abs(speed)) * (0.35 + 0.65 * Math.min(1, Math.abs(input.steer)));
         const over = Math.abs(yawRate) - maxYaw;
         if (over > 0) {
           const a = -Math.sign(yawRate) * over * inertia * Math.min(1, dt * 10);

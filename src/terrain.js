@@ -438,7 +438,7 @@ export function createSandMaterial(sand, detail) {
       )
       .replace(
         '#include <roughnessmap_fragment>',
-        `float roughnessFactor = mix( 0.75 + 0.25 * texture2D( tDryR, uvA ).g, 0.3, wet * sandy );`
+        `float roughnessFactor = mix( 0.75 + 0.25 * texture2D( tDryR, uvA ).g, 0.45, wet * sandy );`
       )
       .replace(
         '#include <normal_fragment_maps>',

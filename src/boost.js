@@ -104,6 +104,8 @@ export class BoostSystem {
           p.orb.rotation.y += dt * 1.5;
         }
         const g = p.group.position;
+        // don't let the light beam fill the screen when the camera passes through it
+        if (p.beam && this.camera) p.beam.visible = this.camera.position.distanceTo(g) > 5;
         if (Math.abs(carPos.y - g.y) < 3 && Math.hypot(carPos.x - g.x, carPos.z - g.z) < p.cfg.radius && this.amount < 100) {
           this.amount = Math.min(100, this.amount + p.cfg.amount);
           p.wait = p.cfg.respawn;
@@ -140,8 +142,8 @@ const flameFragment = /* glsl */ `
     float along = 1.0 - vUv.y;
     float flick = 0.75 + 0.25 * hash(vec2(floor(uTime * 40.0), vUv.x * 3.0));
     float core = pow(along, 1.5);
-    vec3 hot = vec3(1.0, 0.95, 0.8) * 6.0;
-    vec3 mid = vec3(1.0, 0.45, 0.08) * 4.0;
+    vec3 hot = vec3(1.0, 0.85, 0.6) * 3.0;
+    vec3 mid = vec3(1.0, 0.4, 0.06) * 2.6;
     vec3 cool = vec3(0.6, 0.15, 0.6) * 1.5;
     vec3 col = mix(cool, mix(mid, hot, smoothstep(0.7, 1.0, along)), smoothstep(0.0, 0.6, along));
     float a = core * flick * uPower;

@@ -39,7 +39,8 @@ export class Minimap {
     ctx.beginPath();
     let first = true;
     for (let x = pos.x - reach; x <= pos.x + reach; x += 8) {
-      const [mx, mz] = toMap(x, shoreZ(x));
+      // rocky headlands stick out into the sea
+      const [mx, mz] = toMap(x, shoreZ(x) + headlandAt(x) * 110);
       if (first) ctx.moveTo(mx, mz);
       else ctx.lineTo(mx, mz);
       first = false;
