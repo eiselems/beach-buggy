@@ -3,8 +3,8 @@
 import * as THREE from 'three';
 
 export const BOOST = {
-  start: 33,          // meter at the start (0-100)
-  use: 33.3,          // per second while boosting
+  start: 50,          // meter at the start (0-100)
+  use: 22,            // per second while boosting
   accel: 14,          // m/s² of extra push
   maxSpeed: 46,       // m/s (~165 km/h): boost can take you past the engine's top speed
   small: { amount: 12, respawn: 4, radius: 2.4 },

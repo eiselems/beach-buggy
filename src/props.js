@@ -56,11 +56,7 @@ function placeDriftwood(scene, world) {
     log.position.set(x, getHeight(x, z) + r * 0.6, z);
     log.castShadow = log.receiveShadow = true;
     scene.add(log);
-    world.createCollider(
-      RAPIER.ColliderDesc.capsule(len / 2 - r, r)
-        .setTranslation(x, log.position.y, z)
-        .setRotation(new THREE.Quaternion().setFromEuler(log.rotation))
-    );
+    smashables.push({ obj: log, radius: len / 2, home: log.position.clone(), homeRot: log.rotation.clone(), vel: new THREE.Vector3(), spin: new THREE.Vector3(), flying: 0 });
   }
 }
 
@@ -318,6 +314,20 @@ export class PropSystem {
       world.createCollider(r.collider());
     }
     placeUmbrellas(scene, world);
+  }
+
+  // one of everything, so the GPU compiles all shaders during loading instead of mid-drive
+  warmupGroup() {
+    const g = new THREE.Group();
+    const m = [new THREE.Matrix4()];
+    const add = (list) => list.forEach((o) => g.add(o));
+    add(this.instanced(this.assets.palm, m, null, true));
+    add(this.instanced(this.assets.palmFar, m, null, true));
+    add(this.instanced(this.assets.grass, m, [new THREE.Color(1, 1, 1)], false));
+    this.assets.rocks.forEach((r) => add(this.instanced([r], m, null, true)));
+    g.add(makeSpeedTrap());
+    g.add(makeRamp(0, 0, 0).mesh);
+    return g;
   }
 
   instanced(parts, matrices, colors, castShadow) {

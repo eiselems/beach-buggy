@@ -196,8 +196,26 @@ async function main() {
   window.addEventListener('resize', resize);
   resize();
 
-  // Compile shaders up front so the first frames do not stutter
-  await step('Warming up…', () => renderer.compile(scene, camera));
+  // Compile shaders up front so the first frames do not stutter: put one of every kind of object
+  // right in front of the camera (behind the loading screen) and render a couple of frames
+  await step('Warming up…', () => {
+    const warm = props.warmupGroup();
+    boost.addTile('warmup', new Float32Array([0, 0, 0, 0, 3, 0, 0, 1]));
+    const pads = boost.tiles.get('warmup');
+    const fwd = new THREE.Vector3();
+    camera.getWorldDirection(fwd);
+    const at = camera.position.clone().addScaledVector(fwd, 12);
+    warm.position.copy(at);
+    warm.scale.setScalar(0.3);
+    for (const p of pads) p.group.position.add(at);
+    scene.add(warm);
+    flames.update(1, true, 0);
+    for (let i = 0; i < 2; i++) composer ? composer.render() : renderer.render(scene, camera);
+    flames.update(1, false, 0);
+    scene.remove(warm);
+    boost.removeTile('warmup');
+    return renderer.compile(scene, camera);
+  });
 
   // --- HUD
   const hud = { speed: $('speed'), gear: $('gear'), toast: $('toast'), needle: $('needle'), boost: $('boost'), boostNum: $('boost-num'), speedlines: $('speedlines') };
@@ -233,7 +251,8 @@ async function main() {
   let acc = 0;
   let time = 0;
   let upsideDownTime = 0;
-  let deepTime = 0;
+  let deepTime = 0, safeTimer = 0;
+  const safeSpot = new THREE.Vector3(SPAWN.x, SPAWN.z, Math.PI / 2); // x, z, heading
   let boostPower = 0;
   const ahead = new THREE.Vector3();
   const prevPos = new THREE.Vector3(), curPos = new THREE.Vector3();
@@ -328,10 +347,15 @@ async function main() {
     }
 
     // too deep in the sea: put the buggy back on the beach
+    // remember the last good spot on the sand, to come back to
+    safeTimer += dt;
+    if (safeTimer > 1 && !vehicle.state.airborne && !vehicle.state.upsideDown && vehicle.state.inWater < 0.2) {
+      safeTimer = 0;
+      safeSpot.set(bp.x, bp.z, Math.atan2(bv.x, bv.z));
+    }
     deepTime = vehicle.state.inWater > 1.1 ? deepTime + dt : 0;
     if (deepTime > 0.6) {
-      const x = bp.x;
-      vehicle.place(x, shoreZ(x) - 22, Math.atan2(bv.x, bv.z) > 0 ? Math.PI / 2 : -Math.PI / 2);
+      vehicle.place(safeSpot.x, safeSpot.y, safeSpot.z);
       toast('Too deep! Back to the beach');
       deepTime = 0;
     }
@@ -362,7 +386,7 @@ async function main() {
       skills.award('SPEED TRAP', hit.kmh * 6);
       toast(`📸 Speed trap: ${Math.round(hit.kmh)} km/h${hit.best ? ' — new best!' : ''}`);
     }
-    skills.update(dt, vehicle, { smashed: props.smashed, crashed: crashed || controls.reset });
+    skills.update(dt, vehicle, { smashed: props.smashed, crashed: crashed || controls.reset || vehicle.state.upsideDown });
     const slip = vehicle.state.slip.reduce((a, b) => a + b, 0) / 4;
     audio.update(dt, {
       speed: vehicle.speed,
@@ -379,7 +403,7 @@ async function main() {
     // HUD
     const kmh = Math.abs(vehicle.speed) * 3.6;
     hud.speed.textContent = Math.round(kmh);
-    hud.gear.textContent = vehicle.speed < -0.5 ? 'R' : audio.gear;
+    hud.gear.textContent = vehicle.state.airborne || vehicle.state.upsideDown ? '–' : vehicle.speed < -0.5 ? 'R' : audio.gear;
     hud.boostNum.textContent = Math.floor(boost.amount);
     hud.boost.style.setProperty('--b', (boost.amount / 100).toFixed(3));
     hud.boost.classList.toggle('on', boostPower > 0);
