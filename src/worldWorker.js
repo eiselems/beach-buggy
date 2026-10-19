@@ -2,7 +2,7 @@
 //  - 'leaf':  a patch of the visible ground (positions, normals, colours) at some level of detail
 //  - 'phys':  a patch of heights for the physics engine
 //  - 'props': where palms, rocks, grass, ramps and boost pads go in a 256 m map tile
-import { terrainFunction, surfaceAt, shoreZ, headlandAt } from './heightfield.js';
+import { terrainFunction, surfaceAt, shoreZ, headlandAt, headlandWave, trackU, trackAt } from './heightfield.js';
 import { createNoise2D, mulberry32, fbm } from './noise.js';
 
 self.onmessage = (e) => {
@@ -112,7 +112,7 @@ function buildProps({ tx, tz, size, spawn }) {
   const range = (a, b) => a + (b - a) * rnd();
   const x0 = tx * size, z0 = tz * size;
   const inTile = (x, z) => x >= x0 && x < x0 + size && z >= z0 && z < z0 + size;
-  const nearSpawn = (x, z, r) => Math.hypot(x - spawn.x, z - spawn.z) < r;
+  const nearSpawn = (x, z, r) => Math.hypot(x - spawn.x, z - spawn.z) < r || trackAt(x, z, 3) > 0.02; // (also keeps the track clear)
   // does this tile touch the beach strip at all?
   let minU = Infinity, maxU = -Infinity;
   for (let k = 0; k <= 8; k++) {
@@ -223,7 +223,32 @@ function buildProps({ tx, tz, size, spawn }) {
     }
   }
 
+  // the coastal track: marker posts on both sides, boost pads now and then
+  const posts = [];
+  for (let k = 0; k < size / 24; k++) {
+    const x = x0 + k * 24 + 12;
+    if (headlandAt(x) > 0.3) continue;
+    const zc = shoreZ(x) - trackU(x);
+    for (const side of [-7.5, 7.5]) {
+      const z = zc + side;
+      if (inTile(x, z)) posts.push(x, terrainFunction(x, z), z);
+    }
+    if (k % 6 === 3 && inTile(x, zc)) pads.push(x, terrainFunction(x, zc), zc, rnd() < 0.25 ? 1 : 0);
+  }
+
+  // a lighthouse on top of every rocky headland (where the headland wave peaks)
+  const lighthouses = [];
+  for (let x = x0; x < x0 + size; x += 4) {
+    const w = headlandWave(x);
+    if (w > 0.7 && w >= headlandWave(x - 4) && w > headlandWave(x + 4)) {
+      const z = shoreZ(x) + 15;
+      if (inTile(x, z)) lighthouses.push(x, terrainFunction(x, z), z);
+    }
+  }
+
   const out = {
+    lighthouses: new Float32Array(lighthouses),
+    posts: new Float32Array(posts),
     traps: new Float32Array(traps),
     palms: new Float32Array(palms),
     rocks: new Float32Array(rocks),

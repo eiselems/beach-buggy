@@ -2,6 +2,9 @@
 import * as THREE from 'three';
 import { getHeight, getNormal } from './terrain.js';
 import { swashAt } from './ocean.js';
+import { surfaceAt } from './heightfield.js';
+
+const surf = [0, 0, 0, 0, 0, 0];
 
 // Tread imprint: dark rut edges and cross bars from the knobs/paddles
 function createTreadTexture() {
@@ -318,6 +321,9 @@ export function emitWheelEffects(particles, vehicle, forward, dt, time) {
     }
     const dry = ground > 0.6;
     const slip = st.slip[i];
+    // dust takes the colour of the ground (sand, dirt track, grass)
+    surfaceAt(p.x, p.z, ground, 1, surf);
+    const dust = [Math.pow(surf[0], 0.45) * 0.92, Math.pow(surf[1], 0.45) * 0.92, Math.pow(surf[2], 0.45) * 0.92];
     // fine dust clouds
     let rate = (speed * 0.5 + Math.min(slip, 3) * 2.5) * dt * (dry ? 1 : 0.35);
     if (Math.random() < rate - Math.floor(rate)) rate += 1;
@@ -325,7 +331,7 @@ export function emitWheelEffects(particles, vehicle, forward, dt, time) {
       particles.emit(
         p.x + (Math.random() - 0.5) * 0.3, p.y + 0.1, p.z + (Math.random() - 0.5) * 0.3,
         vel.x * 0.3 + (Math.random() - 0.5) * 1.5, 0.4 + Math.random() * 1.2, vel.z * 0.3 + (Math.random() - 0.5) * 1.5,
-        { size: 0.5 + Math.random() * 0.5, grow: 1.8, life: 1.6 + Math.random() * 1.5, alpha: dry ? 0.22 : 0.12, color: [0.86, 0.76, 0.6], gravity: -0.02, drag: 1.2 }
+        { size: 0.5 + Math.random() * 0.5, grow: 1.8, life: 1.6 + Math.random() * 1.5, alpha: dry ? 0.22 : 0.12, color: dust, gravity: -0.02, drag: 1.2 }
       );
     }
     // paddle tires throw a rooster tail of sand when spinning
@@ -335,7 +341,7 @@ export function emitWheelEffects(particles, vehicle, forward, dt, time) {
         particles.emit(
           p.x, p.y + 0.15, p.z,
           -forward.x * (3 + Math.random() * 4) + vel.x * 0.4 + (Math.random() - 0.5), 2 + Math.random() * 3, -forward.z * (3 + Math.random() * 4) + vel.z * 0.4 + (Math.random() - 0.5),
-          { size: 0.08 + Math.random() * 0.1, grow: 0.15, life: 0.7 + Math.random() * 0.4, alpha: 0.9, color: dry ? [0.82, 0.71, 0.54] : [0.5, 0.43, 0.34], gravity: 1, drag: 0.4 }
+          { size: 0.08 + Math.random() * 0.1, grow: 0.15, life: 0.7 + Math.random() * 0.4, alpha: 0.9, color: dry ? dust : [0.5, 0.43, 0.34], gravity: 1, drag: 0.4 }
         );
       }
     }

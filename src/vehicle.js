@@ -2,6 +2,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { RIDE_HEIGHT } from './buggy.js';
 import { getHeight } from './terrain.js';
+import { trackAt } from './heightfield.js';
 import { swashAt } from './ocean.js';
 import { BOOST } from './boost.js';
 
@@ -25,6 +26,7 @@ export const TUNING = {
   groundClearance: 0.4,     // m between the sand and the bottom of the body
   gripDrySand: 1.1,         // soft dry sand: about 0.8 g in corners
   gripWetSand: 1.4,         // firm wet sand near the water grips better
+  gripTrack: 1.5,           // the packed dirt track
   gripDrift: 0.6,           // rear grip with the handbrake pulled (fraction of normal grip)
   gripSliding: 0.8,         // rear grip while you hold a drift (fraction; keeps slides going instead of snapping back)
   antiRoll: 9000,
@@ -210,6 +212,7 @@ export class Vehicle {
       const h = getHeight(cp.x, cp.z);
       const wet = Math.min(1, Math.max(0, (1.5 - h) / 1.0));
       let grip = T.gripDrySand + (T.gripWetSand - T.gripDrySand) * wet;
+      grip += (T.gripTrack - grip) * trackAt(cp.x, cp.z); // packed dirt on the track grips best
       const under = swashAt(cp.x, this.time) - h;
       if (under > 0) grip *= 1 - 0.2 * Math.min(1, under * 3);
       if (!w.front) {
@@ -247,7 +250,7 @@ export class Vehicle {
     let contacts = 0;
     for (let i = 0; i < 4; i++) if (c.wheelIsInContact(i)) contacts++;
     if (vlen > 0.01) {
-      const soft = groundH > 0.9 ? 1.5 : 1.0;
+      const soft = (groundH > 0.9 ? 1.5 : 1.0) * (1 - 0.4 * trackAt(pos.x, pos.z)); // less drag on the track
       const rolling = contacts > 0 ? 0.035 * T.mass * 9.81 * soft : 0;
       const aero = 0.45 * vlen * vlen;
       const water = waterDepth > 0.05 ? T.mass * 0.7 * Math.min(waterDepth, 1.2) * vlen : 0;

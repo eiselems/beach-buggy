@@ -230,6 +230,7 @@ function placeUmbrellas(scene, world) {
 // ---------------------------------------------------------------------------
 // Smashables: light things (umbrellas) that fly away when you hit them, and come back later
 const smashables = [];
+let postParts = null;
 function updateSmashables(dt, carPos, carVel) {
   const speed = Math.hypot(carVel.x, carVel.z);
   let hits = 0;
@@ -379,6 +380,24 @@ export class PropSystem {
     t.grass = null;
     t.colliders = null;
     if (this.boost) this.boost.addTile(t.key, d.pads);
+    // track marker posts: white with an orange reflector
+    if (d.posts.length) {
+      postParts ||= [
+        { geometry: new THREE.BoxGeometry(0.14, 1.1, 0.14).translate(0, 0.55, 0), material: new THREE.MeshStandardMaterial({ color: 0xf0f0ea, roughness: 0.6 }) },
+        { geometry: new THREE.BoxGeometry(0.16, 0.16, 0.16).translate(0, 0.95, 0), material: new THREE.MeshStandardMaterial({ color: 0x331100, emissive: 0xff7a1a, emissiveIntensity: 2.5 }) },
+      ];
+      const ms = [];
+      for (let i = 0; i < d.posts.length; i += 3) ms.push(new THREE.Matrix4().makeTranslation(d.posts[i], d.posts[i + 1] - 0.1, d.posts[i + 2]));
+      t.posts = this.instanced(postParts, ms, null, true);
+      for (const m of t.posts) this.scene.add(m);
+    }
+    t.lighthouses = [];
+    for (let i = 0; i < d.lighthouses.length; i += 3) {
+      const lh = makeLighthouse();
+      lh.position.set(d.lighthouses[i], d.lighthouses[i + 1] - 0.5, d.lighthouses[i + 2]);
+      this.scene.add(lh);
+      t.lighthouses.push(lh);
+    }
     t.traps = [];
     for (let i = 0; i < d.traps.length; i += 4) {
       const [x, y, z, yaw] = d.traps.subarray(i, i + 4);
@@ -413,6 +432,7 @@ export class PropSystem {
     }
     for (const r of t.rockItems) add(rockCollider(this.assets.rocks[r.v].geometry, r.pos, r.q, r.scale));
     for (const r of t.ramps) add(r.collider());
+    for (const lh of t.lighthouses) add(RAPIER.ColliderDesc.cylinder(9, 2.6).setTranslation(lh.position.x, lh.position.y + 9, lh.position.z));
   }
 
   removeColliders(t) {
@@ -421,13 +441,14 @@ export class PropSystem {
   }
 
   unload(t) {
-    const all = [...(t.palmNear || []), ...(t.palmFar || []), ...(t.rocks || []), t.grass].filter(Boolean);
+    const all = [...(t.palmNear || []), ...(t.palmFar || []), ...(t.rocks || []), ...(t.posts || []), t.grass].filter(Boolean);
     for (const m of all) {
       this.scene.remove(m);
       m.dispose();
     }
     for (const r of t.ramps || []) this.scene.remove(r.mesh);
     for (const tr of t.traps || []) this.scene.remove(tr.mesh);
+    for (const lh of t.lighthouses || []) this.scene.remove(lh);
     if (t.colliders) this.removeColliders(t);
     if (this.boost) this.boost.removeTile(t.key);
   }
@@ -435,6 +456,7 @@ export class PropSystem {
   update(time, camera, focus, dt = 0, carVel = null) {
     wind.value = time;
     this.smashed = carVel ? updateSmashables(dt, focus, carVel) : 0;
+    for (const t of this.tiles.values()) for (const lh of t.lighthouses || []) lh.userData.beam.rotation.y = time * 0.8;
     // speed traps: which side of each gate line is the buggy on? Crossing it inside the gate triggers it
     this.trapHits = [];
     if (carVel) {
@@ -542,6 +564,68 @@ function makeSpeedTrap() {
   sign.position.y = 6;
   sign.castShadow = true;
   g.add(sign);
+  return g;
+}
+
+// a striped lighthouse with a lamp and two slowly turning light beams
+let lighthouseParts = null;
+function makeLighthouse() {
+  if (!lighthouseParts) {
+    const c = document.createElement('canvas');
+    c.width = 16;
+    c.height = 128;
+    const ctx = c.getContext('2d');
+    for (let i = 0; i < 4; i++) {
+      ctx.fillStyle = i % 2 ? '#c8202a' : '#f4f1ea';
+      ctx.fillRect(0, i * 32, 16, 32);
+    }
+    const stripes = new THREE.CanvasTexture(c);
+    stripes.colorSpace = THREE.SRGBColorSpace;
+    lighthouseParts = {
+      tower: new THREE.CylinderGeometry(1.7, 2.6, 18, 24).translate(0, 9, 0),
+      towerMat: new THREE.MeshStandardMaterial({ map: stripes, roughness: 0.55 }),
+      base: new THREE.CylinderGeometry(3.6, 4.0, 1.5, 24).translate(0, 0.75, 0),
+      stone: new THREE.MeshStandardMaterial({ color: 0x8d8478, roughness: 0.9 }),
+      gallery: new THREE.CylinderGeometry(2.4, 2.4, 0.3, 24).translate(0, 18.15, 0),
+      dark: new THREE.MeshStandardMaterial({ color: 0x23272b, roughness: 0.5, metalness: 0.5 }),
+      lamp: new THREE.CylinderGeometry(1.2, 1.2, 2.2, 16).translate(0, 19.4, 0),
+      lampMat: new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffe08a, emissiveIntensity: 4, roughness: 0.2 }),
+      roof: new THREE.ConeGeometry(1.7, 1.6, 16).translate(0, 21.3, 0),
+      roofMat: new THREE.MeshStandardMaterial({ color: 0xa8161f, roughness: 0.5 }),
+      beam: new THREE.ConeGeometry(4, 60, 24, 1, true).translate(0, -30, 0).rotateZ(Math.PI / 2),
+      beamMat: new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `varying vec2 vUv; void main(){ float a = pow(vUv.y, 3.0) * 0.35; gl_FragColor = vec4(vec3(1.0, 0.93, 0.7) * a, 1.0); }`,
+      }),
+    };
+  }
+  const P = lighthouseParts;
+  const g = new THREE.Group();
+  const add = (geo, mat) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = m.receiveShadow = true;
+    g.add(m);
+    return m;
+  };
+  add(P.base, P.stone);
+  add(P.tower, P.towerMat);
+  add(P.gallery, P.dark);
+  add(P.lamp, P.lampMat).castShadow = false;
+  add(P.roof, P.roofMat);
+  const beam = new THREE.Group();
+  beam.position.y = 19.4;
+  for (const r of [0, Math.PI]) {
+    const b = new THREE.Mesh(P.beam, P.beamMat);
+    b.rotation.y = r;
+    b.castShadow = false;
+    beam.add(b);
+  }
+  g.add(beam);
+  g.userData.beam = beam;
   return g;
 }
 

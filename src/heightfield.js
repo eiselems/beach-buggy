@@ -32,6 +32,13 @@ export function shoreZ(x) {
 }
 
 // 0..1: how much of a rocky headland there is at this x
+// the raw headland wave (before smoothstep): lighthouses go where it peaks
+export function headlandWave(x) {
+  let s = 0;
+  for (const [a, f, p] of HEAD_WAVES) s += a * Math.sin(x * f + p);
+  return s;
+}
+
 export function headlandAt(x) {
   let s = 0;
   for (const [a, f, p] of HEAD_WAVES) s += a * Math.sin(x * f + p);
@@ -48,6 +55,17 @@ export function seaFloor(d) {
 // Beach rising up from the water, `u` meters inland
 export function beachRise(u) {
   return 2.6 * (1 - Math.exp(-u / 70)) + 0.01 * u;
+}
+
+// The coastal dirt track: winds along behind the beach, through the dunes
+export function trackU(x) {
+  return 150 + 45 * Math.sin(x * 0.0031 + 1) + 20 * Math.sin(x * 0.011 + 0.4);
+}
+// 1 on the track, fading to 0 at its edges (`wide` adds the graded shoulders)
+export function trackAt(x, z, wide = 0) {
+  if (headlandAt(x) > 0.3) return 0; // the track goes round the rocky headlands... by stopping there
+  const off = Math.abs(shoreZ(x) - z - trackU(x));
+  return 1 - smoothstep(4 + wide, 7 + wide * 2.5, off);
 }
 
 // The height of the ground at any point. Change this to reshape the world!
@@ -78,6 +96,9 @@ export function terrainFunction(x, z) {
       const r = 1 - Math.abs(fbm(nD, x * 0.0011, z * 0.0011, 4));
       h += mtn * (150 * r * r * r + 30 * fbm(nB, x * 0.003, z * 0.003, 3));
     }
+    // the track is graded flat through the dunes, with sloped shoulders
+    const track = trackAt(x, z, 8);
+    if (track > 0) h = lerp(h, beachRise(u) + 0.3 * smoothstep(220, 480, u) * 18, track);
     // small bumps you feel while driving
     h += 0.07 * nC(x * 0.06, z * 0.06) * smoothstep(-2, 8, u);
   }
@@ -100,6 +121,8 @@ const GRASS = srgb(0.4, 0.45, 0.22);
 const SCRUB = srgb(0.52, 0.5, 0.33);
 const ROCK = srgb(0.47, 0.43, 0.39);
 const ROCK_DARK = srgb(0.32, 0.3, 0.28);
+const DIRT = srgb(0.6, 0.48, 0.34);
+const DIRT_DARK = srgb(0.42, 0.33, 0.24);
 const mixInto = (c, t, k) => {
   c[0] += (t[0] - c[0]) * k;
   c[1] += (t[1] - c[1]) * k;
@@ -132,6 +155,14 @@ export function surfaceAt(x, z, h, ny, out) {
     mixInto(c, ROCK_DARK, rockiness * smoothstep(0.4, 0.8, slope) * 0.7);
     sandy -= rockiness;
     rocky = rockiness;
+  }
+  // packed dirt on the track, with darker wheel ruts
+  const track = trackAt(x, z);
+  if (track > 0) {
+    const off = Math.abs(shoreZ(x) - z - trackU(x));
+    const rut = Math.exp(-(((off - 1.6) / 0.6) ** 2)) * 0.5;
+    mixInto(c, DIRT, track * 0.85);
+    mixInto(c, DIRT_DARK, track * rut);
   }
   out[0] = c[0];
   out[1] = c[1];
