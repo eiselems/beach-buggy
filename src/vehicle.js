@@ -152,6 +152,8 @@ export class Vehicle {
     const flatSpeed = Math.hypot(lateral, speed);
     const slipAngle = flatSpeed > 4 && speed > -1 ? Math.atan2(lateral, Math.max(speed, 0.1)) : 0;
     this.slipAngle = slipAngle;
+    // holding a drift = throttle on and steering against the slide (countersteer has the same sign as the slip)
+    const driftHeld = input.throttle > 0.3 && input.steer * slipAngle > 0.02 && Math.abs(slipAngle) > 0.15;
 
     // --- steering (less at high speed so it stays controllable), plus automatic countersteer:
     // the front wheels lean towards where the buggy is actually going, like Forza's steering assist
@@ -220,8 +222,8 @@ export class Vehicle {
         const cornering = Math.min(1, Math.abs(input.steer)) * Math.min(1, Math.max(0, (speed - 12) / 6)) * Math.max(0, Math.min(1, (30 - speed) / 8));
         grip *= 1 - 0.38 * input.throttle * cornering;
         if (input.handbrake) grip *= T.gripDrift;
-        else if (Math.abs(slipAngle) > 0.15) {
-          // throttle keeps the rear loose once a slide has started (power-over drifting)
+        else if (driftHeld) {
+          // throttle + countersteer keep the rear loose once a slide has started (power-over drifting)
           const k = Math.min(1, (Math.abs(slipAngle) - 0.15) / 0.2) * input.throttle;
           grip *= 1 - (1 - T.gripSliding) * k;
         }
@@ -267,8 +269,8 @@ export class Vehicle {
       const asked = Math.abs(input.steer) > 0.1 || input.handbrake || Math.abs(slipAngle) > 0.2;
       // when a slide is snapping back (rotating towards straight), damp hard so it doesn't swing
       // through to the other side like a pendulum
-      const snapping = Math.abs(slipAngle) > 0.08 && yawRate * slipAngle > 0;
-      const k = (snapping ? 2.2 : asked ? 0.25 : 1) * T.yawDamping * Math.min(1, Math.abs(speed) / 8);
+      const snapping = Math.abs(slipAngle) > 0.05 && yawRate * slipAngle > 0;
+      const k = (snapping ? 4 : asked ? 0.25 : 1) * T.yawDamping * Math.min(1, Math.abs(speed) / 8);
       const inertia = 600;
       const imp = -yawRate * inertia * k * dt;
       body.applyTorqueImpulse({ x: up.x * imp, y: up.y * imp, z: up.z * imp }, true);
@@ -278,10 +280,27 @@ export class Vehicle {
         const a = Math.sign(slipAngle) * Math.min(excess, 0.6) * T.driftAssist * (1 + Math.max(0, speed - 25) / 10) * inertia * dt;
         body.applyTorqueImpulse({ x: up.x * a, y: up.y * a, z: up.z * a }, true);
       }
-      // while drifting, the throttle holds the angle and keeps the speed up (less scrub)
-      if (Math.abs(slipAngle) > 0.2 && (input.throttle > 0.3 || input.handbrake)) {
+      // a drift only lasts while you hold it (throttle + countersteer); otherwise the buggy
+      // straightens out towards where it's going
+      if (driftHeld && Math.abs(slipAngle) < 0.45) {
         const hold = Math.sign(slipAngle) * -0.6 * input.throttle * inertia * dt;
         body.applyTorqueImpulse({ x: up.x * hold, y: up.y * hold, z: up.z * hold }, true);
+      } else if (!driftHeld && !input.handbrake && Math.abs(slipAngle) > 0.03) {
+        const a = Math.sign(slipAngle) * Math.min(Math.abs(slipAngle), 0.6) * 6 * inertia * dt;
+        body.applyTorqueImpulse({ x: up.x * a, y: up.y * a, z: up.z * a }, true);
+      }
+      // grip limit: outside a drift, don't let the buggy rotate faster than its tyres could turn it
+      // (so full lock at top speed carves a curve instead of spinning)
+      if (!driftHeld && !input.handbrake && Math.abs(speed) > 15) {
+        const maxYaw = (1.25 * 9.81) / Math.abs(speed);
+        const over = Math.abs(yawRate) - maxYaw;
+        if (over > 0) {
+          const a = -Math.sign(yawRate) * over * inertia * Math.min(1, dt * 10);
+          body.applyTorqueImpulse({ x: up.x * a, y: up.y * a, z: up.z * a }, true);
+        }
+      }
+      // while drifting, the throttle keeps the speed up (less scrub)
+      if (Math.abs(slipAngle) > 0.2 && (input.throttle > 0.3 || input.handbrake)) {
         const push = T.mass * 4.5 * Math.max(input.throttle, input.handbrake ? 0.6 : 0) * dt;
         const vx = lv.x, vz = lv.z, vl = Math.hypot(vx, vz) || 1;
         body.applyImpulse({ x: (vx / vl) * push, y: 0, z: (vz / vl) * push }, true);

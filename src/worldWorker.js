@@ -122,6 +122,30 @@ function buildProps({ tx, tz, size, spawn }) {
     maxU = Math.max(maxU, s - z0);
   }
 
+  // jump ramps on the beach, driving along the coast
+  const ramps = [];
+  if (rnd() < 0.45) {
+    const x = range(x0 + 20, x0 + size - 20);
+    const z = shoreZ(x) - range(14, 70);
+    if (inTile(x, z) && !nearSpawn(x, z, 60) && normalY(x, z) > 0.97 && headlandAt(x) < 0.1) {
+      const big = rnd() < 0.4;
+      ramps.push(x, z, rnd() < 0.5 ? Math.PI / 2 : -Math.PI / 2, big ? 9 : 7, big ? 1.6 : 1.1, big ? 5 : 4);
+    }
+  }
+
+  // keep the landing zone behind each ramp clear (120 m long, 10 m wide)
+  // (the two hand-placed ramps near the start too, see PropSystem)
+  const lanes = [...ramps, -70, shoreZ(-70) - 12, Math.PI / 2, 0, 0, 0, 230, shoreZ(230) - 14, -Math.PI / 2, 0, 0, 0];
+  const inRampLane = (x, z) => {
+    for (let r = 0; r < lanes.length; r += 6) {
+      const dx = x - lanes[r], dz = z - lanes[r + 1], yaw = lanes[r + 2];
+      const along = dx * Math.sin(yaw) + dz * Math.cos(yaw);
+      const across = Math.abs(dx * Math.cos(yaw) - dz * Math.sin(yaw));
+      if (along > -40 && along < 130 && across < 6) return true;
+    }
+    return false;
+  };
+
   // palm trees: groves along the beach, a few scattered inland
   const palms = [];
   if (maxU > 20 && minU < 900) {
@@ -132,7 +156,7 @@ function buildProps({ tx, tz, size, spawn }) {
       const cluster = noise(x * 0.012, z * 0.012);
       const need = u < 150 ? 0.15 : u < 260 ? 0.4 : 0.48;
       if (cluster < need) continue;
-      if (nearSpawn(x, z, 18)) continue;
+      if (nearSpawn(x, z, 18) || inRampLane(x, z)) continue;
       if (normalY(x, z) < 0.9) continue;
       let ok = true;
       for (let p = 0; p < palms.length; p += 6) if (Math.hypot(palms[p] - x, palms[p + 2] - z) < 7) ok = false;
@@ -154,7 +178,7 @@ function buildProps({ tx, tz, size, spawn }) {
     if (head > 0.2 && d > -60 && d < 60 && rnd() < head) scale = range(0.8, 3.2);
     else if (d > -6 && d < 22 && rnd() < 0.12 && noise(x * 0.02, 3) > 0.25) scale = range(0.4, 1.4);
     else if (d < -90 && d > -1600 && rnd() < 0.08) scale = range(0.5, d < -600 ? 2.5 : 1.8);
-    if (!scale || nearSpawn(x, z, 25)) continue;
+    if (!scale || nearSpawn(x, z, 25) || inRampLane(x, z)) continue;
     const size2 = scale * 2;
     rocks.push(x, terrainFunction(x, z) - size2 * 0.12, z, range(-0.2, 0.2), range(0, Math.PI * 2), range(-0.2, 0.2), size2, range(0.7, 1.1), Math.floor(rnd() * 3));
   }
@@ -177,17 +201,6 @@ function buildProps({ tx, tz, size, spawn }) {
         const sc = range(1.4, 2.4) * (0.75 + patch);
         grass.push(cx, terrainFunction(cx, cz) - 0.04, cz, rnd() * Math.PI * 2, sc, sc * range(0.8, 1.3), range(0.85, 1.1), range(0.85, 1.05), range(0.75, 1.0));
       }
-    }
-  }
-
-  // jump ramps on the beach, driving along the coast
-  const ramps = [];
-  if (rnd() < 0.45) {
-    const x = range(x0 + 20, x0 + size - 20);
-    const z = shoreZ(x) - range(14, 70);
-    if (inTile(x, z) && !nearSpawn(x, z, 60) && normalY(x, z) > 0.97 && headlandAt(x) < 0.1) {
-      const big = rnd() < 0.4;
-      ramps.push(x, z, rnd() < 0.5 ? Math.PI / 2 : -Math.PI / 2, big ? 9 : 7, big ? 1.6 : 1.1, big ? 5 : 4);
     }
   }
 

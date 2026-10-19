@@ -314,7 +314,21 @@ async function main() {
     while (acc >= DT && steps < 10) {
       copyBody(prevPos, prevRot);
       vehicle.step(DT, controls);
+      const before = vehicle.body.linvel();
       world.step();
+      // glancing hits: if something solid suddenly stopped the buggy, keep the part of the speed that
+      // runs along the obstacle (you scrape past instead of sticking to it); head-on hits still stop you
+      const after = vehicle.body.linvel();
+      const dvx = after.x - before.x, dvz = after.z - before.z;
+      const dv = Math.hypot(dvx, dvz), v0 = Math.hypot(before.x, before.z);
+      if (dv > 6 && v0 > 8) {
+        const nx = dvx / dv, nz = dvz / dv; // push direction of the obstacle
+        const into = before.x * nx + before.z * nz; // negative: speed going into the obstacle
+        const tx = before.x - nx * into, tz = before.z - nz * into; // the sliding-past part
+        vehicle.body.setLinvel({ x: tx * 0.75, y: Math.min(after.y, before.y + 2), z: tz * 0.75 }, true);
+        const av = vehicle.body.angvel();
+        vehicle.body.setAngvel({ x: av.x * 0.3, y: Math.max(-2, Math.min(2, av.y)), z: av.z * 0.3 }, true);
+      }
       acc -= DT;
       steps++;
     }
@@ -354,7 +368,9 @@ async function main() {
     safeTimer += dt;
     if (safeTimer > 1 && !vehicle.state.airborne && !vehicle.state.upsideDown && vehicle.state.inWater < 0.2) {
       safeTimer = 0;
-      safeSpot.set(bp.x, bp.z, Math.atan2(bv.x, bv.z));
+      // heading along the coast (the way you were going), never towards the sea
+      const along = Math.sign(bv.x || 1);
+      safeSpot.set(bp.x, Math.min(bp.z, shoreZ(bp.x) - 25), Math.atan2(along * 10, shoreZ(bp.x + along * 5) - shoreZ(bp.x - along * 5)));
     }
     deepTime = vehicle.state.inWater > 1.1 ? deepTime + dt : 0;
     if (deepTime > 0.6) {

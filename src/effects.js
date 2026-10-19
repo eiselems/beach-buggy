@@ -130,10 +130,10 @@ export class TireTracks {
   setColor(q, strength) {
     for (let k = 0; k < 4; k++) {
       const o = (q * 4 + k) * 4;
-      this.colors[o] = 0.4;
-      this.colors[o + 1] = 0.32;
-      this.colors[o + 2] = 0.23;
-      this.colors[o + 3] = 0.7 * strength;
+      this.colors[o] = 0.26;
+      this.colors[o + 1] = 0.2;
+      this.colors[o + 2] = 0.14;
+      this.colors[o + 3] = 0.85 * strength;
     }
   }
 
